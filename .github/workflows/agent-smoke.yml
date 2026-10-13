@@ -1,0 +1,56 @@
+name: Agent smoke
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  agent-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - macos-latest
+          - ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.3
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+      - name: Install Agent workspace only
+        run: pnpm --filter @open-desktop-remote/agent... install --frozen-lockfile
+      - name: Agent tests
+        run: pnpm --filter @open-desktop-remote/agent test:run
+      - name: Validate macOS installer syntax
+        if: runner.os != 'Windows'
+        run: bash -n scripts/install-macos.sh
+      - name: Validate Windows installer syntax
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $errors = $null
+          $tokens = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path scripts/install-windows.ps1), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors) { throw ($errors | Out-String) }
+      - name: Agent smoke
+        run: node scripts/smoke-agent.mjs
+      - name: Build npm package
+        run: pnpm agent:package
+      - name: Create npm tarball
+        run: npm pack ./dist/agent-npm --pack-destination dist
+      - name: Install tarball without workspace
+        shell: bash
+        run: |
+          version="$(node -p "require('./dist/agent-npm/package.json').version")"
+          npm install --prefix dist/agent-install-check --no-audit --no-fund "./dist/open-desktop-remote-agent-${version}.tgz"
+      - name: Check packaged CLI
+        run: node dist/agent-install-check/node_modules/open-desktop-remote-agent/dist/cli.mjs --help
+      - name: Check packaged Desktop Commander
+        run: node scripts/smoke-packaged-agent.mjs dist/agent-install-check

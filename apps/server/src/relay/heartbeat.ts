@@ -1,0 +1,2 @@
+export const HEARTBEAT_INTERVAL_MS = 15_000;
+export const HEARTBEAT_STALE_MS = 45_000;

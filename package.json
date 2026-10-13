@@ -1,0 +1,31 @@
+{
+  "name": "openremotedesktop",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.12.3",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "vitest",
+    "test:run": "pnpm -r --workspace-concurrency=1 --if-present test:run",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test:e2e": "vitest run --config tests/e2e/vitest.config.ts",
+    "agent:package": "node scripts/build-agent-package.mjs"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.2.0",
+    "@types/node": "^24.0.0",
+    "@types/ws": "8.18.1",
+    "tsx": "^4.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^5.0.0",
+    "ws": "8.18.3"
+  }
+}

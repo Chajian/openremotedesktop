@@ -1,0 +1,23 @@
+{
+  "name": "@open-desktop-remote/desktop-commander-adapter",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "test:run": "vitest run",
+    "test:integration": "vitest run src/desktop-commander-client.integration.test.ts",
+    "typecheck": "tsc --noEmit",
+    "generate:manifest": "tsx scripts/generate-manifest.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.2.0",
+    "@wonderwhy-er/desktop-commander": "0.2.52"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.0",
+    "vitest": "^5.0.3"
+  }
+}
