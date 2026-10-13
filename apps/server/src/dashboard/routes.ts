@@ -29,7 +29,8 @@ import type { OAuthClientRepository } from "../oauth/client-repository.js";
 import { sessionCookie } from "../routes/login.js";
 import { CsrfProtection } from "./csrf.js";
 import { installerSource } from "./installer.js";
-import { renderConnectPage, renderPairingPage, renderDevicePage } from "./onboarding.js";
+import { renderPairingPage, renderDevicePage } from "./onboarding.js";
+import { renderConnectPage, type AgentOs, type WizardStep } from "./wizard.js";
 import {
   renderDashboard,
   renderLoginPage,
@@ -152,10 +153,15 @@ export function registerDashboardRoutes(
     const auth = requireDashboardAuth(request, reply, deps.sessions);
     if (!auth) return;
     interactivePage(reply);
-    const selected = (request.query as { os?: unknown }).os;
-    const os = selected === "mac" || selected === "linux" ? selected : "win";
-    return reply.type("text/html; charset=utf-8").send(
-      renderConnectPage(os, deps.config.publicBaseUrl, deps.config.agentInstallEnabled === true));
+    const query = request.query as { os?: unknown; step?: unknown; code?: unknown };
+    const os: AgentOs = query.os === "mac" || query.os === "linux" ? query.os : "win";
+    const step: WizardStep = query.step === "2" ? 2 : query.step === "3" ? 3 : 1;
+    return reply.type("text/html; charset=utf-8").send(renderConnectPage({
+      os, step, baseUrl: deps.config.publicBaseUrl,
+      enabled: deps.config.agentInstallEnabled === true,
+      csrf: csrf.tokenFor(auth.sessionToken),
+      ...(typeof query.code === "string" ? { code: query.code } : {}),
+    }));
   });
 
   app.get("/device", async (request, reply) => {
