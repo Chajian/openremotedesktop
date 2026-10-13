@@ -1,7 +1,7 @@
 # Open Desktop Remote Agent installer (user-level; no system PATH changes).
 param(
   [Parameter(Mandatory = $true)][string]$Server,
-  [string]$PackageSource = 'open-desktop-remote-agent@0.1.0',
+  [string]$PackageSource = 'open-desktop-remote-agent@0.1.1',
   [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'OpenDesktopRemote'),
   [switch]$InstallOnly
 )
@@ -48,13 +48,21 @@ if ($installedVersion -notmatch '^v24\.') {
 }
 $npm = Join-Path $runtime 'node_modules\npm\bin\npm-cli.js'
 if (-not (Test-Path $npm)) { throw 'npm missing from Node.js distribution.' }
-Write-Host 'Installing Agent package...'
-& $node $npm install --prefix $InstallDir --no-audit --no-fund --package-lock=false $PackageSource
-if ($LASTEXITCODE -ne 0) { throw 'npm installation failed.' }
 $cli = Join-Path $InstallDir 'node_modules\open-desktop-remote-agent\dist\cli.mjs'
+$manifest = Join-Path $InstallDir 'node_modules\open-desktop-remote-agent\package.json'
+$expected = if ($PackageSource -match '^open-desktop-remote-agent@(\d+\.\d+\.\d+)$') { $Matches[1] } else { '' }
+$current = if (Test-Path $manifest) { (Get-Content $manifest -Raw | ConvertFrom-Json).version } else { '' }
+if ($expected -and $current -eq $expected -and (Test-Path $cli)) {
+  Write-Host "Agent $expected is already installed; keeping the existing device identity."
+} else {
+  Write-Host "Installing Agent from official npm Registry..."
+  & $node $npm install --registry=https://registry.npmjs.org/ --prefix $InstallDir --no-audit --no-fund --package-lock=false $PackageSource
+  if ($LASTEXITCODE -ne 0) { throw 'npm installation failed. Check network access to registry.npmjs.org.' }
+}
 if (-not (Test-Path $cli)) { throw 'Agent CLI was not installed.' }
 Write-Host "Agent installed in $InstallDir"
 if ($InstallOnly) { return }
 Write-Host "Approve your computer at $Server/device when the pairing code appears."
 Write-Host 'Keep this window open while you want the computer online.'
 & $node $cli agent connect --server $Server
+if ($LASTEXITCODE -ne 0) { throw "Agent stopped unexpectedly. Check the error above." }

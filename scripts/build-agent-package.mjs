@@ -33,7 +33,7 @@ await chmod(entry, 0o755);
 
 const manifest = {
   name: "open-desktop-remote-agent",
-  version: "0.1.0",
+  version: "0.1.1",
   description: "Workstation agent for the self-hosted Open Desktop Remote relay",
   license: "Apache-2.0",
   type: "module",
