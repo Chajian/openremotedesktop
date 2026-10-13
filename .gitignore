@@ -1,0 +1,41 @@
+node_modules/
+dist/
+coverage/
+
+# Local configuration and credentials (keep the reviewed .env.example template).
+.env
+.env.*
+!.env.example
+.npmrc
+.ssh/
+.codex/
+.idea/
+.vscode/
+*.pem
+*.key
+*.ppk
+*.p12
+*.pfx
+
+# Local databases, backups, release bundles and session logs.
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.tar
+*.tar.gz
+*.zip
+*.bak
+*.backup
+*.jsonl
+*.log
+.superpowers/
+
+# Per-machine startup helpers and private operations records.
+# These intentionally remain available on an owner's device but not in Git.
+/scripts/check-windows-identity.cjs
+/scripts/online-windows.ps1
+/scripts/online-mac.command
+/两台设备上线.cmd
+/设备上线-Windows.cmd
+/docs/vps-multiuser-upgrade-preflight.zh-CN.md

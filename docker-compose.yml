@@ -1,0 +1,49 @@
+services:
+  server:
+    build:
+      context: .
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      ODR_PUBLIC_BASE_URL: "https://${ODR_DOMAIN:?set ODR_DOMAIN}"
+      ODR_DATABASE_PATH: /data/server.sqlite
+      ODR_HOST: 0.0.0.0
+      ODR_PORT: "3000"
+      DEBUG_PAYLOAD_LOGGING: "${DEBUG_PAYLOAD_LOGGING:-false}"
+      ODR_GITHUB_CLIENT_ID: "${ODR_GITHUB_CLIENT_ID:-}"
+      ODR_GITHUB_CLIENT_SECRET: "${ODR_GITHUB_CLIENT_SECRET:-}"
+    volumes:
+      - server_data:/data
+    expose:
+      - "3000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      ODR_DOMAIN: "${ODR_DOMAIN:?set ODR_DOMAIN}"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  server_data:
+  caddy_data:
+  caddy_config:

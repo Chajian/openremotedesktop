@@ -1,0 +1,215 @@
+# Remote-control package: staging requires human 2FA approval before publication.
+name: Agent npm staged release
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/npm-agent-release.yml'
+      - 'apps/agent/**'
+      - 'packages/**'
+      - 'scripts/build-agent-package.mjs'
+      - 'scripts/verify-agent-release.mjs'
+      - 'scripts/prepare-github-release.mjs'
+      - 'scripts/smoke-packaged-agent.mjs'
+      - 'pnpm-lock.yaml'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Optional existing agent-vX.Y.Z tag to build its GitHub Release (no npm stage)'
+        required: false
+        type: string
+  push:
+    tags:
+      - 'agent-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify npm tarball (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    env:
+      NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.3
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org/
+      - name: Verify repository contains no local credentials
+        run: node scripts/check-source-hygiene.mjs
+      - name: Install Agent workspace
+        run: pnpm --filter @open-desktop-remote/agent... install --frozen-lockfile
+      - name: Agent tests and typecheck
+        run: |
+          pnpm --filter @open-desktop-remote/agent test:run
+          pnpm --filter @open-desktop-remote/agent typecheck
+      - name: Package for npm
+        run: pnpm agent:package
+      - name: Verify version, repository and contents
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || (github.ref_type == 'tag' && github.ref_name) || '' }}
+        run: |
+          if [[ -n "$RELEASE_TAG" ]]; then
+            node scripts/verify-agent-release.mjs "$RELEASE_TAG"
+          else
+            node scripts/verify-agent-release.mjs
+          fi
+      - name: Install packed tarball in a clean prefix
+        run: |
+          npm pack ./dist/agent-npm --pack-destination dist
+          version="$(node -p "require('./dist/agent-npm/package.json').version")"
+          npm install --prefix dist/agent-install-check --no-audit --no-fund --no-package-lock "./dist/open-desktop-remote-agent-${version}.tgz"
+          node dist/agent-install-check/node_modules/open-desktop-remote-agent/dist/cli.mjs --help
+          node scripts/smoke-packaged-agent.mjs dist/agent-install-check
+      - name: Validate GitHub Release assets and SHA256 checksums
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          version="$(node -p "require('./dist/agent-npm/package.json').version")"
+          node scripts/prepare-github-release.mjs "agent-v${version}"
+          (cd dist/github-release && sha256sum --check SHA256SUMS.txt)
+      - name: Upload review artifact
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-npm-review
+          path: dist/open-desktop-remote-agent-*.tgz
+          retention-days: 7
+
+  stage:
+    name: Stage to npm (approval required)
+    if: github.repository == 'Chajian/openremotedesktop' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/agent-v')
+    needs: verify
+    runs-on: ubuntu-latest
+    concurrency:
+      group: npm-agent-stage
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Ensure tagged commit is on master
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          git fetch origin master
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" origin/master; then
+            echo "Release tags must reference commits already on master." >&2
+            exit 1
+          fi
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.3
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org/
+      - name: Install dependencies and OIDC-capable npm CLI
+        run: |
+          pnpm install --frozen-lockfile
+          npm install --global npm@11.16.0 --registry=https://registry.npmjs.org/
+          npm --version
+      - name: Full release validation
+        run: |
+          pnpm test:run
+          pnpm typecheck
+          pnpm test:e2e
+          pnpm agent:package
+          node scripts/verify-agent-release.mjs "$GITHUB_REF_NAME"
+      - name: Check if npm version is already published
+        id: npm-version
+        working-directory: dist/agent-npm
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if npm view "open-desktop-remote-agent@${version}" version --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
+            echo "Already published on npm; no duplicate staging required."
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Submit for 2FA review (never publish directly)
+        if: steps.npm-version.outputs.published != 'true'
+        working-directory: dist/agent-npm
+        run: npm stage publish --access public --registry=https://registry.npmjs.org/
+
+  github-release:
+    name: Publish GitHub Release downloads
+    if: github.repository == 'Chajian/openremotedesktop' && ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/agent-v')) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.release_tag, 'agent-v')))
+    needs: verify
+    runs-on: ubuntu-latest
+    concurrency:
+      group: github-agent-release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require existing semver tag on master
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^agent-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid Agent release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          git fetch origin master --tags
+          TAG_SHA="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          if ! git merge-base --is-ancestor "$TAG_SHA" origin/master; then
+            echo "Release tags must point at commits on master." >&2
+            exit 1
+          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        with:
+          name: agent-npm-review
+          path: dist/
+      - name: Recover package metadata from verified tarball
+        run: |
+          version="${RELEASE_TAG#agent-v}"
+          mkdir -p dist/agent-npm
+          tar -xzOf "dist/open-desktop-remote-agent-${version}.tgz" package/package.json > dist/agent-npm/package.json
+          test "$(node -p "require('./dist/agent-npm/package.json').version")" = "$version"
+      - name: Prepare versioned assets and verify SHA256
+        run: |
+          node scripts/prepare-github-release.mjs "$RELEASE_TAG"
+          (cd dist/github-release && sha256sum --check SHA256SUMS.txt)
+      - name: Publish a GitHub Release
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::notice::GitHub Release already exists; not overwriting assets."
+            exit 0
+          fi
+          gh release create "$RELEASE_TAG" dist/github-release/* \
+            --verify-tag \
+            --title "OpenRemoteDesktop Agent ${RELEASE_TAG#agent-v}" \
+            --generate-notes \
+            --notes "Includes the npm tarball, Windows/macOS installers, SHA256 checksums, and setup instructions. npm installation may require separate human approval of the staged npm version."

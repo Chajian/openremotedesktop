@@ -1,0 +1,28 @@
+{
+  "name": "@open-desktop-remote/agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:run": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@open-desktop-remote/desktop-commander-adapter": "workspace:*",
+    "@open-desktop-remote/protocol": "workspace:*",
+    "@open-desktop-remote/shared": "workspace:*",
+    "tsx": "^4.23.15",
+    "ws": "^8.18.3"
+  },
+  "optionalDependencies": {
+    "@napi-rs/keyring": "2.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.18.1",
+    "esbuild": "0.28.2",
+    "typescript": "^5.9.0",
+    "vitest": "^5.0.3"
+  }
+}
