@@ -11,7 +11,7 @@ afterEach(async () => {
   while (cleanups.length) await cleanups.pop()?.();
 });
 
-async function fixture() {
+async function fixture(agentInstallEnabled = false) {
   const dir = mkdtempSync(join(tmpdir(), "odr-dashboard-"));
   const databasePath = join(dir, "server.sqlite");
   const db = createDatabase(databasePath);
@@ -21,6 +21,7 @@ async function fixture() {
       databasePath,
       publicBaseUrl: new URL("https://remote.example.com"),
       environment: "test",
+      agentInstallEnabled,
     },
   });
   cleanups.push(async () => {
@@ -222,5 +223,81 @@ describe("Owner Dashboard", () => {
       headers: { cookie: first.cookie },
     });
     expect(currentSession.statusCode).toBe(200);
+  });
+});
+
+
+describe("one-command onboarding", () => {
+  it("gates public installers until the reviewed npm release is available", async () => {
+    const { app, login } = await fixture();
+    const { cookie } = await login();
+    expect((await app.inject({ url: "/install/windows.ps1" })).statusCode).toBe(404);
+    expect((await app.inject({ url: "/install/macos.sh" })).statusCode).toBe(404);
+    const page = await app.inject({ url: "/dashboard/connect?os=win", headers: { cookie } });
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain("一键安装尚未启用");
+    expect(page.body).not.toContain("Installer checksum mismatch");
+  });
+
+  it("serves hash-pinned Windows and macOS scripts from the configured HTTPS origin", async () => {
+    const { app, login } = await fixture(true);
+    const { cookie } = await login();
+    for (const [os, endpoint] of [["win", "/install/windows.ps1"], ["mac", "/install/macos.sh"]] as const) {
+      const script = await app.inject({ url: endpoint });
+      expect(script.statusCode).toBe(200);
+      expect(script.headers["cache-control"]).toBe("no-store");
+      expect(script.body).toContain("open-desktop-remote-agent@0.1.1");
+      expect(script.body).toContain("registry.npmjs.org");
+      const page = await app.inject({ url: "/dashboard/connect?os=" + os, headers: { cookie } });
+      const { createHash } = await import("node:crypto");
+      expect(page.body).toContain(createHash("sha256").update(script.rawPayload).digest("hex"));
+      expect(page.body).toContain(endpoint);
+      expect(page.body).toContain("复制命令");
+    }
+    expect((await app.inject({ url: "/dashboard/onboarding.js" })).body).toContain("setInterval(poll, 2500)");
+  });
+
+  it("prefills short-lived code but never authorizes until a CSRF-protected POST", async () => {
+    const { app, db, login } = await fixture(true);
+    const pairing = (await app.inject({ method: "POST", url: "/api/device-pairings" })).json();
+    const noSession = await app.inject({ url: "/device?code=" + pairing.userCode });
+    expect(noSession.statusCode).toBe(302);
+    expect(noSession.headers.location).toContain("returnTo=");
+    const { cookie } = await login();
+    const page = await app.inject({ url: "/device?code=" + pairing.userCode, headers: { cookie } });
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain('value="' + pairing.userCode + '"');
+    expect(page.headers["referrer-policy"]).toBe("no-referrer");
+    expect(new DeviceRepository(db).listDevices()).toHaveLength(0);
+    const unconsented = await app.inject({ method: "POST", url: "/dashboard/pairings/approve",
+      headers: { cookie }, payload: { userCode: pairing.userCode } });
+    expect(unconsented.statusCode).toBe(403);
+    const result = await app.inject({ method: "POST", url: "/dashboard/pairings/approve",
+      headers: { cookie }, payload: { csrf: csrfFrom(page.body), userCode: pairing.userCode.toLowerCase().replace("-", ""), friendlyName: "My Laptop" } });
+    expect(result.statusCode).toBe(303);
+    const device = new DeviceRepository(db).listDevices()[0]!;
+    expect(result.headers.location).toBe("/dashboard/devices/" + device.id);
+    const status = await app.inject({ url: "/dashboard/devices/" + device.id + "/status", headers: { cookie } });
+    expect(status.json()).toEqual({ deviceId: device.id, state: "OFFLINE" });
+    const detail = await app.inject({ url: "/dashboard/devices/" + device.id, headers: { cookie } });
+    expect(detail.body).toContain('data-device-id="' + device.id + '"');
+    expect((await app.inject({ url: "/dashboard/devices/" + device.id + "/status" })).statusCode).toBe(302);
+    expect((await app.inject({ url: "/dashboard/devices/00000000-0000-4000-8000-000000000000/status", headers: { cookie } })).statusCode).toBe(404);
+    expect((await app.inject({ method: "POST", url: "/dashboard/pairings/approve", headers: { cookie },
+      payload: { csrf: csrfFrom(page.body), userCode: pairing.userCode } })).statusCode).toBe(409);
+  });
+
+  it("rejects expired and malformed pairing codes without issuing device credentials", async () => {
+    const { app, db, login } = await fixture();
+    const { cookie } = await login();
+    const pairing = (await app.inject({ method: "POST", url: "/api/device-pairings" })).json();
+    const page = await app.inject({ url: "/device", headers: { cookie } });
+    const csrf = csrfFrom(page.body);
+    expect((await app.inject({ method: "POST", url: "/dashboard/pairings/approve",
+      headers: { cookie }, payload: { csrf, userCode: "BAD" } })).statusCode).toBe(400);
+    db.prepare("UPDATE device_pairings SET expires_at = ? WHERE user_code = ?").run(Date.now() - 1, pairing.userCode);
+    expect((await app.inject({ method: "POST", url: "/dashboard/pairings/approve",
+      headers: { cookie }, payload: { csrf, userCode: pairing.userCode } })).statusCode).toBe(410);
+    expect(new DeviceRepository(db).listDevices()).toHaveLength(0);
   });
 });

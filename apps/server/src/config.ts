@@ -4,6 +4,7 @@ export type ServerConfig = {
   databasePath: string;
   publicBaseUrl: URL;
   environment: ServerEnvironment;
+  agentInstallEnabled?: boolean;
   githubClientId?: string;
   githubClientSecret?: string;
 };
@@ -72,6 +73,7 @@ export function loadServerConfig(
     databasePath,
     publicBaseUrl,
     environment,
+    agentInstallEnabled: env.ODR_AGENT_INSTALL_ENABLED === "true",
     listenHost,
     listenPort,
   };

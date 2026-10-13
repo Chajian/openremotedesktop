@@ -15,6 +15,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json vitest.workspace.ts ./
 COPY apps ./apps
 COPY packages ./packages
+COPY scripts/install-windows.ps1 scripts/install-macos.sh ./scripts/
 
 RUN pnpm install --frozen-lockfile
 

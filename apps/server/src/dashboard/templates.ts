@@ -16,6 +16,7 @@ function page(title: string, body: string): string {
   return `<!doctype html><html><head><meta charset="utf-8">
 <title>${escapeHtml(title)}</title>
 <style>
+.btn{display:inline-block;padding:9px 15px;background:#1658b5;color:white;text-decoration:none;border-radius:7px}
 body{font-family:system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem}
 table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:.5rem;text-align:left}
 form{display:inline-block;margin:.2rem}.stack{display:block;margin:.8rem 0}
@@ -83,6 +84,7 @@ ${hiddenCsrf(input.csrf)}<button>Revoke access</button></form></td></tr>`,
     `<h2>Devices</h2><table><thead><tr><th>Name</th><th>ID</th><th>State</th><th>OS</th><th>Agent</th><th>Desktop Commander</th><th>Last seen</th><th>Actions</th></tr></thead>
 <tbody>${deviceRows || '<tr><td colspan="8">No devices</td></tr>'}</tbody></table>
 <h2>Pair a computer</h2>
+<p><a class="btn" href="/dashboard/connect">Add device · 一键安装</a></p>
 <p>Start the Agent on your computer, then enter the verification code displayed there. Pending pairing codes are never listed publicly.</p>
 <form class="stack" method="post" action="/dashboard/pairings/approve">
 ${hiddenCsrf(input.csrf)}

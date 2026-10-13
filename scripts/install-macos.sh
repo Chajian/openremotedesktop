@@ -2,7 +2,7 @@
 # Open Desktop Remote Agent installer (user-level; no Homebrew required).
 set -euo pipefail
 SERVER=''
-PACKAGE_SOURCE='open-desktop-remote-agent@0.1.0'
+PACKAGE_SOURCE='open-desktop-remote-agent@0.1.1'
 INSTALL_DIR="$HOME/Library/Application Support/OpenDesktopRemote"
 INSTALL_ONLY=0
 
@@ -48,9 +48,24 @@ if [[ ! "$version" =~ ^v24\. ]]; then
 fi
 npm="$runtime/lib/node_modules/npm/bin/npm-cli.js"
 [[ -f "$npm" ]] || { echo 'npm missing from Node.js distribution.' >&2; exit 1; }
-echo 'Installing Agent package...'
-"$node" "$npm" install --prefix "$INSTALL_DIR" --no-audit --no-fund --package-lock=false "$PACKAGE_SOURCE"
 cli="$INSTALL_DIR/node_modules/open-desktop-remote-agent/dist/cli.mjs"
+manifest="$INSTALL_DIR/node_modules/open-desktop-remote-agent/package.json"
+expected=''
+if [[ "$PACKAGE_SOURCE" =~ ^open-desktop-remote-agent@([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+  expected="${BASH_REMATCH[1]}"
+fi
+current=''
+if [[ -f "$manifest" ]]; then
+  current="$("$node" -p "require(process.argv[1]).version" "$manifest")"
+fi
+if [[ -n "$expected" && "$current" == "$expected" && -f "$cli" ]]; then
+  echo "Agent $expected is already installed; keeping existing device identity."
+else
+  echo 'Installing Agent from official npm Registry...'
+  "$node" "$npm" install --registry=https://registry.npmjs.org/ --prefix "$INSTALL_DIR" --no-audit --no-fund --package-lock=false "$PACKAGE_SOURCE" || {
+    echo 'npm installation failed. Check network access to registry.npmjs.org.' >&2; exit 1;
+  }
+fi
 [[ -f "$cli" ]] || { echo 'Agent CLI was not installed.' >&2; exit 1; }
 echo "Agent installed in $INSTALL_DIR"
 if [[ "$INSTALL_ONLY" -eq 1 ]]; then exit 0; fi

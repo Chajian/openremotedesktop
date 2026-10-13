@@ -1,12 +1,11 @@
 import type { NativeCredentialBackend } from "./credential-store.js";
 
 const SERVICE = "open-desktop-remote";
-const ACCOUNT = "device";
-
 export class KeyringCredentialBackend implements NativeCredentialBackend {
+  constructor(private readonly account = "device") {}
   private async entry() {
     const { Entry } = await import("@napi-rs/keyring");
-    return new Entry(SERVICE, ACCOUNT);
+    return new Entry(SERVICE, this.account);
   }
 
   async get(): Promise<string | null> {
