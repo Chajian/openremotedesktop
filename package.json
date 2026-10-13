@@ -11,6 +11,8 @@
     "test:run": "pnpm -r --workspace-concurrency=1 --if-present test:run",
     "typecheck": "pnpm -r --if-present typecheck",
     "test:e2e": "vitest run --config tests/e2e/vitest.config.ts",
+    "security:scan": "node scripts/check-source-hygiene.mjs --all",
+    "security:hooks": "git config --local core.hooksPath .githooks",
     "agent:package": "node scripts/build-agent-package.mjs"
   },
   "pnpm": {

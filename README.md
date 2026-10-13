@@ -198,6 +198,7 @@ See:
 - [Self-hosting](docs/self-hosting.md)
 - [Agent guide](docs/agent.md)
 - [Security model](docs/security.md)
+- [Repository secret hygiene and local Git hooks (Chinese)](docs/repository-security.zh-CN.md)
 
 ## License
 

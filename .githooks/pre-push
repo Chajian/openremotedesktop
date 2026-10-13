@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+repo="$(git rev-parse --show-toplevel)"
+echo "Checking all local Git history for credentials before pushing..."
+node "$repo/scripts/check-source-hygiene.mjs" --history
