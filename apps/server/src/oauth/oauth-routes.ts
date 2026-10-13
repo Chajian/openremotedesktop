@@ -85,7 +85,7 @@ export function registerOAuthFlowRoutes(
       ? Object.fromEntries(new URL(returnTo, oauth.issuer).searchParams)
       : request.query as Record<string, unknown>;
     const resource = query.resource;
-    if (typeof resource !== "string" || resource !== oauth.protectedResource) {
+    if (typeof resource !== "string" || !oauth.allowedResources.has(resource)) {
       return reply.code(400).send({ error: "invalid_request", error_description: "resource must identify this MCP endpoint" });
     }
     try {

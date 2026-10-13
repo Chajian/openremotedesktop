@@ -13,13 +13,14 @@ afterEach(async () => {
   while (cleanups.length) await cleanups.pop()?.();
 });
 
-function fixture() {
+function fixture(dualDomain = false) {
   const dir = mkdtempSync(join(tmpdir(), "odr-mcp-auth-"));
   const databasePath = join(dir, "server.sqlite");
   const db = createDatabase(databasePath);
   const config = {
     databasePath,
     publicBaseUrl: new URL("https://remote.example.com"),
+    ...(dualDomain ? { additionalPublicBaseUrls: [new URL("https://new.example.com")] } : {}),
     environment: "test" as const,
   };
   const app = buildApp({ db, config });
@@ -54,7 +55,7 @@ async function approveConsent(app: ReturnType<typeof buildApp>, url: string, coo
   } });
 }
 
-async function issueAccessToken(app: ReturnType<typeof buildApp>): Promise<string> {
+async function issueAccessToken(app: ReturnType<typeof buildApp>, resource = "https://remote.example.com/mcp"): Promise<string> {
   await app.inject({
     method: "POST",
     url: "/api/bootstrap",
@@ -85,7 +86,7 @@ async function issueAccessToken(app: ReturnType<typeof buildApp>): Promise<strin
     state: "state",
     code_challenge: challengeFor(verifier),
     code_challenge_method: "S256",
-    resource: "https://remote.example.com/mcp",
+    resource,
   });
   const auth = await approveConsent(app, `/oauth/authorize?${params.toString()}`, cookie);
   const code = new URL(String(auth.headers.location)).searchParams.get("code")!;
@@ -246,6 +247,61 @@ describe("MCP OAuth resource protection", () => {
         serverInfo: { name: "open-desktop-remote", version: "0.1.0" },
       },
     });
+  });
+
+  it("supports distinct MCP token audiences with one OAuth issuer and database", async () => {
+    const {app} = fixture(true);
+    const newHost = {host: "new.example.com"};
+    const metadata = await app.inject({method: "GET",
+      url: "/.well-known/oauth-protected-resource/mcp", headers: newHost});
+    expect(metadata.statusCode).toBe(200);
+    expect(metadata.json()).toMatchObject({
+      resource: "https://new.example.com/mcp",
+      authorization_servers: ["https://remote.example.com/"],
+    });
+    const challenge = await app.inject({method:"GET",url:"/mcp",headers:newHost});
+    expect(challenge.statusCode).toBe(401);
+    expect(challenge.headers["www-authenticate"]).toContain(
+      'resource_metadata="https://new.example.com/.well-known/oauth-protected-resource/mcp"');
+    const oldMetadata = await app.inject({method:"GET",
+      url:"/.well-known/oauth-protected-resource/mcp",headers:{host:"remote.example.com"}});
+    expect(oldMetadata.json().resource).toBe("https://remote.example.com/mcp");
+
+    const newToken = await issueAccessToken(app, "https://new.example.com/mcp");
+    const mcpHeaders = {authorization: "Bearer " + newToken,
+      accept: "application/json, text/event-stream"};
+    const works = await app.inject({method: "POST", url: "/mcp",
+      headers: {...mcpHeaders, host: "new.example.com"}, payload: initializePayload()});
+    expect(works.statusCode).toBe(200);
+    const replayOnOld = await app.inject({method: "POST", url: "/mcp",
+      headers: {...mcpHeaders, host: "remote.example.com"}, payload: initializePayload()});
+    expect(replayOnOld.statusCode).toBe(401);
+
+    const oldToken = await issueAccessToken(app);
+    const oldWorks = await app.inject({method: "POST", url: "/mcp",headers:{
+      host:"remote.example.com", authorization:"Bearer " + oldToken,
+      accept:"application/json, text/event-stream"},payload:initializePayload()});
+    expect(oldWorks.statusCode).toBe(200);
+    const oldOnNew = await app.inject({method:"POST",url:"/mcp",headers:{
+      host:"new.example.com", authorization:"Bearer " + oldToken},payload:initializePayload()});
+    expect(oldOnNew.statusCode).toBe(401);
+
+    const login = await app.inject({method:"POST",url:"/api/login",headers:{
+      host:"new.example.com", origin:"https://new.example.com", "sec-fetch-site":"same-origin",
+    },payload:{password:"correct-password"}});
+    expect(login.statusCode).toBe(204);
+    const cookie = String(login.headers["set-cookie"]).split(";")[0]!;
+    const dashboard = await app.inject({method:"GET",url:"/dashboard/mcp",
+      headers:{host:"new.example.com",cookie}});
+    expect(dashboard.statusCode).toBe(200);
+    expect(dashboard.body).toContain("https://new.example.com/mcp");
+  });
+
+  it("ignores spoofed forwarded hosts for MCP metadata", async () => {
+    const {app} = fixture(true);
+    const r = await app.inject({method:"GET",url:"/.well-known/oauth-protected-resource",
+      headers:{host:"evil.example.com","x-forwarded-host":"new.example.com"}});
+    expect(r.json().resource).toBe("https://remote.example.com/mcp");
   });
 
   it("keeps OAuth discovery compatible with PKCE S256 and DCR", async () => {

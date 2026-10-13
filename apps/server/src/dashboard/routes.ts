@@ -12,7 +12,7 @@ import {
   type OwnerPrincipal,
   type SessionRepository,
 } from "../auth/session-repository.js";
-import type { ServerConfig } from "../config.js";
+import { publicBaseUrlForHost, type ServerConfig } from "../config.js";
 import {
   DeviceNotFoundError,
   type DeviceRepository,
@@ -157,7 +157,7 @@ export function registerDashboardRoutes(
 
   app.get("/dashboard/mcp", async (request, reply) => {
     if (!requireDashboardAuth(request, reply, deps.sessions)) return;
-    const mcpUrl = new URL("/mcp", deps.config.publicBaseUrl).toString();
+    const mcpUrl = new URL("/mcp", publicBaseUrlForHost(deps.config, request.headers.host)).toString();
     return reply.type("text/html; charset=utf-8").send(renderMcpPage(mcpUrl));
   });
 

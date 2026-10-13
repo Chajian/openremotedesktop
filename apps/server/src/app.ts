@@ -5,7 +5,7 @@ import type BetterSqlite3 from "better-sqlite3";
 import { OwnerRepository } from "./auth/owner-repository.js";
 import { registerGitHubAuthRoutes } from "./auth/github-auth.js";
 import { SessionRepository } from "./auth/session-repository.js";
-import type { ServerConfig } from "./config.js";
+import { publicBaseUrlForHost, type ServerConfig } from "./config.js";
 import { registerDashboardRoutes } from "./dashboard/routes.js";
 import { registerHealthRoutes } from "./health/routes.js";
 import { createOAuthService } from "./oauth/authorization-server.js";
@@ -48,7 +48,8 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
     if (!protectedApi) return;
     const origin = request.headers.origin;
     const fetchSite = request.headers["sec-fetch-site"];
-    if ((origin && origin !== deps.config.publicBaseUrl.origin) ||
+    const expectedOrigin = publicBaseUrlForHost(deps.config, request.headers.host).origin;
+    if ((origin && origin !== expectedOrigin) ||
         (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none")) {
       return reply.code(403).send({ error: "CROSS_ORIGIN_REQUEST" });
     }

@@ -27,6 +27,30 @@ describe("cookie-backed API origin defense", () => {
     } finally {await app.close();db.close();}
   });
 
+  it("accepts same-host secondary origin but rejects a different trusted origin", async () => {
+    const db = createDatabase(":memory:");
+    const app = buildApp({db, config:{
+      databasePath:":memory:",publicBaseUrl:new URL("https://remote.example.com"),
+      additionalPublicBaseUrls:[new URL("https://new.example.com")],environment:"test",
+    }});
+    try {
+      await new OwnerRepository(db).bootstrapOwner({password:"local-secret"});
+      const ok = await app.inject({method:"POST",url:"/api/login",headers:{
+        host:"new.example.com",origin:"https://new.example.com","sec-fetch-site":"same-origin",
+      },payload:{password:"local-secret"}});
+      expect(ok.statusCode).toBe(204);
+      const wrong = await app.inject({method:"POST",url:"/api/login",headers:{
+        host:"new.example.com",origin:"https://remote.example.com","sec-fetch-site":"same-origin",
+      },payload:{password:"local-secret"}});
+      expect(wrong.statusCode).toBe(403);
+      const spoof = await app.inject({method:"POST",url:"/api/login",headers:{
+        host:"evil.example.com","x-forwarded-host":"new.example.com",
+        origin:"https://new.example.com","sec-fetch-site":"same-origin",
+      },payload:{password:"local-secret"}});
+      expect(spoof.statusCode).toBe(403);
+    } finally {await app.close();db.close();}
+  });
+
   it("rejects login POST from an unrelated origin before checking credentials", async () => {
     const db = createDatabase(":memory:");
     const app = buildApp({ db, config: {

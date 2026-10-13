@@ -3,6 +3,8 @@ export type ServerEnvironment = "development" | "test" | "production";
 export type ServerConfig = {
   databasePath: string;
   publicBaseUrl: URL;
+  /** Secondary public HTTPS origins accepted for this same Server instance. */
+  additionalPublicBaseUrls?: URL[];
   environment: ServerEnvironment;
   githubClientId?: string;
   githubClientSecret?: string;
@@ -62,6 +64,23 @@ export function loadServerConfig(
     throw new Error("ODR_PUBLIC_BASE_URL must use http or https");
   }
 
+  const extraOrigins = env.ODR_ADDITIONAL_PUBLIC_BASE_URLS?.trim();
+  const additionalPublicBaseUrls = extraOrigins
+    ? extraOrigins.split(",").map((entry) => {
+      let url: URL;
+      try { url = new URL(entry.trim()); } catch { throw new Error("Invalid ODR_ADDITIONAL_PUBLIC_BASE_URLS entry"); }
+      if (url.protocol !== publicBaseUrl.protocol || url.pathname !== "/" ||
+          url.search || url.hash || url.username || url.password ||
+          url.origin === publicBaseUrl.origin) {
+        throw new Error("ODR_ADDITIONAL_PUBLIC_BASE_URLS must contain distinct origins using the primary scheme");
+      }
+      return url;
+    })
+    : [];
+  if (new Set(additionalPublicBaseUrls.map((url) => url.origin)).size !== additionalPublicBaseUrls.length) {
+    throw new Error("ODR_ADDITIONAL_PUBLIC_BASE_URLS contains a duplicate origin");
+  }
+
   const githubClientId = env.ODR_GITHUB_CLIENT_ID?.trim();
   const githubClientSecret = env.ODR_GITHUB_CLIENT_SECRET?.trim();
   if (Boolean(githubClientId) !== Boolean(githubClientSecret)) {
@@ -71,8 +90,16 @@ export function loadServerConfig(
     ...(githubClientId && githubClientSecret ? { githubClientId, githubClientSecret } : {}),
     databasePath,
     publicBaseUrl,
+    ...(additionalPublicBaseUrls.length ? { additionalPublicBaseUrls } : {}),
     environment,
     listenHost,
     listenPort,
   };
+}
+
+/** Resolve only explicit, configured Host values. Never trust X-Forwarded-Host. */
+export function publicBaseUrlForHost(config: ServerConfig, host: string | undefined): URL {
+  const normalizedHost = typeof host === "string" ? host.trim().toLowerCase() : "";
+  return [config.publicBaseUrl, ...(config.additionalPublicBaseUrls ?? [])]
+    .find((base) => base.host.toLowerCase() === normalizedHost) ?? config.publicBaseUrl;
 }

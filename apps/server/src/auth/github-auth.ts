@@ -3,7 +3,7 @@ import type BetterSqlite3 from "better-sqlite3";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { OwnerRepository } from "./owner-repository.js";
 import type { SessionRepository } from "./session-repository.js";
-import type { ServerConfig } from "../config.js";
+import { publicBaseUrlForHost, type ServerConfig } from "../config.js";
 import { safeReturnTo, privateBrowserPage } from "../dashboard/browser-auth.js";
 import { sessionCookie } from "../routes/login.js";
 
@@ -23,6 +23,12 @@ function challenge(value: string): string {
 function cookieFor(nonce: string, config: ServerConfig): string {
   return "odr_gh_login=" + nonce + "; Path=/auth/github; Max-Age=600; HttpOnly; SameSite=Lax" +
     (config.environment === "production" ? "; Secure" : "");
+}
+
+function nonceHashForCallback(nonce: string, redirectUri: string, config: ServerConfig): string {
+  // Keep the legacy primary-domain hash compatible with in-flight logins.
+  const primaryCallback = new URL("/auth/github/callback", config.publicBaseUrl).toString();
+  return redirectUri === primaryCallback ? hash(nonce) : hash(`${nonce}\n${redirectUri}`);
 }
 
 function nonceFrom(cookie: string | undefined): string | null {
@@ -46,13 +52,13 @@ export function registerGitHubAuthRoutes(
   const clientId = config.githubClientId;
   const clientSecret = config.githubClientSecret;
   const enabled = Boolean(clientId && clientSecret);
-  const redirectUri = new URL("/auth/github/callback", config.publicBaseUrl).toString();
   const clearNonce = cookieFor("", config).replace("Max-Age=600", "Max-Age=0");
 
   app.get("/auth/github", async (request, reply) => {
     privateBrowserPage(reply);
     if (!enabled) return reply.code(404).send("GitHub login is not configured");
     const query = request.query as { returnTo?: unknown };
+    const redirectUri = new URL("/auth/github/callback", publicBaseUrlForHost(config, request.headers.host)).toString();
     const state = randomBytes(32).toString("base64url");
     const nonce = randomBytes(32).toString("base64url");
     const verifier = randomBytes(32).toString("base64url");
@@ -60,7 +66,7 @@ export function registerGitHubAuthRoutes(
     db.prepare("DELETE FROM github_login_attempts WHERE expires_at <= ?").run(now);
     db.prepare(
       "INSERT INTO github_login_attempts (state_hash, nonce_hash, code_verifier, return_to, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)"
-    ).run(hash(state), hash(nonce), verifier, safeReturnTo(query.returnTo), now + TEN_MINUTES, now);
+    ).run(hash(state), nonceHashForCallback(nonce, redirectUri, config), verifier, safeReturnTo(query.returnTo), now + TEN_MINUTES, now);
     const url = new URL(GITHUB_AUTH_URL);
     url.searchParams.set("client_id", clientId!);
     url.searchParams.set("redirect_uri", redirectUri);
@@ -75,6 +81,7 @@ export function registerGitHubAuthRoutes(
     privateBrowserPage(reply);
     reply.header("Set-Cookie", clearNonce);
     if (!enabled) return reply.code(404).send("GitHub login is not configured");
+    const redirectUri = new URL("/auth/github/callback", publicBaseUrlForHost(config, request.headers.host)).toString();
     const query = request.query as Record<string, unknown>;
     const state = query.state;
     const code = query.code;
@@ -91,7 +98,8 @@ export function registerGitHubAuthRoutes(
       if (attempt) db.prepare("DELETE FROM github_login_attempts WHERE state_hash = ?").run(hash(state));
       return attempt;
     })();
-    if (!row || row.expiresAt <= Date.now() || !sameHash(row.nonceHash, hash(nonce))) {
+    if (!row || row.expiresAt <= Date.now() ||
+        !sameHash(row.nonceHash, nonceHashForCallback(nonce, redirectUri, config))) {
       return reply.code(403).send("Invalid GitHub login attempt");
     }
 
