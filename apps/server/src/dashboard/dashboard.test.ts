@@ -233,7 +233,7 @@ describe("one-command onboarding", () => {
     const { cookie } = await login();
     expect((await app.inject({ url: "/install/windows.ps1" })).statusCode).toBe(404);
     expect((await app.inject({ url: "/install/macos.sh" })).statusCode).toBe(404);
-    const page = await app.inject({ url: "/dashboard/connect?os=win", headers: { cookie } });
+    const page = await app.inject({ url: "/dashboard/connect?step=2&os=win", headers: { cookie } });
     expect(page.statusCode).toBe(200);
     expect(page.body).toContain("一键安装尚未启用");
     expect(page.body).not.toContain("Installer checksum mismatch");
@@ -248,7 +248,7 @@ describe("one-command onboarding", () => {
       expect(script.headers["cache-control"]).toBe("no-store");
       expect(script.body).toContain("open-desktop-remote-agent@0.1.1");
       expect(script.body).toContain("registry.npmjs.org");
-      const page = await app.inject({ url: "/dashboard/connect?os=" + os, headers: { cookie } });
+      const page = await app.inject({ url: "/dashboard/connect?step=2&os=" + os, headers: { cookie } });
       const { createHash } = await import("node:crypto");
       expect(page.body).toContain(createHash("sha256").update(script.rawPayload).digest("hex"));
       expect(page.body).toContain(endpoint);

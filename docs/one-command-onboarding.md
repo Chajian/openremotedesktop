@@ -12,6 +12,14 @@
   Dockerfile copies `scripts/install-{windows.ps1,macos.sh}` into the image.
 - Keep `ODR_AGENT_INSTALL_ENABLED=false` for rollback without disrupting paired devices.
 
+## User interface scope
+
+- Only the standalone `/dashboard/connect` Add Device wizard is updated to the
+  approved full-screen, step-by-step layout (OS → install → manual pairing fallback).
+- The existing Dashboard navigation, other pages, and global design are not redesigned.
+- Docker Compose forwards `ODR_AGENT_INSTALL_ENABLED` explicitly, with a safe
+  default of `false`. Opening the new wizard must not enable unpublished downloads.
+
 ## User flow
 
 1. Sign in to Dashboard; use **Add device** (`/dashboard/connect`).
