@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+repo="$(git rev-parse --show-toplevel)"
+echo "Checking staged changes for credentials and private files..."
+node "$repo/scripts/check-source-hygiene.mjs" --staged

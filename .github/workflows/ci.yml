@@ -11,8 +11,11 @@ jobs:
       ODR_DOMAIN: remote.example.test
     steps:
       - uses: actions/checkout@v4
-      - name: Scan source for credentials and local-only files
-        run: node scripts/check-source-hygiene.mjs
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan staged source and complete Git history
+        run: node scripts/check-source-hygiene.mjs --all
       - uses: pnpm/action-setup@v4
         with:
           version: 10.12.3
