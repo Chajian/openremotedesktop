@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { loginNonce, privateBrowserPage, safeReturnTo } from "./browser-auth.js";
 import type {
   FastifyInstance,
@@ -27,6 +28,8 @@ import type { ConnectionRegistry } from "../relay/connection-registry.js";
 import type { OAuthClientRepository } from "../oauth/client-repository.js";
 import { sessionCookie } from "../routes/login.js";
 import { CsrfProtection } from "./csrf.js";
+import { installerSource } from "./installer.js";
+import { renderConnectPage, renderPairingPage, renderDevicePage } from "./onboarding.js";
 import {
   renderDashboard,
   renderLoginPage,
@@ -121,11 +124,71 @@ export function registerDashboardRoutes(
     return redirect(reply, "/dashboard/login", 303);
   });
 
+  // Script-enabled pages use a same-origin external asset; no inline JS.
+  function interactivePage(reply: FastifyReply) {
+    privateBrowserPage(reply);
+    reply.header("Content-Security-Policy",
+      "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+  }
+
+  app.get("/dashboard/onboarding.js", async (_request, reply) => {
+    reply.header("Cache-Control", "no-store");
+    return reply.type("application/javascript; charset=utf-8").send(
+      readFileSync(new URL("./onboarding-client.js", import.meta.url)));
+  });
+
+  for (const [route, os] of [
+    ["/install/windows.ps1", "win"],
+    ["/install/macos.sh", "mac"],
+  ] as const) {
+    app.get(route, async (_request, reply) => {
+      if (!deps.config.agentInstallEnabled) return reply.code(404).send();
+      reply.header("Cache-Control", "no-store");
+      return reply.type("text/plain; charset=utf-8").send(installerSource(os));
+    });
+  }
+
+  app.get("/dashboard/connect", async (request, reply) => {
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth) return;
+    interactivePage(reply);
+    const selected = (request.query as { os?: unknown }).os;
+    const os = selected === "mac" || selected === "linux" ? selected : "win";
+    return reply.type("text/html; charset=utf-8").send(
+      renderConnectPage(os, deps.config.publicBaseUrl, deps.config.agentInstallEnabled === true));
+  });
+
   app.get("/device", async (request, reply) => {
-    if (!requireOwnerSession(request, deps.sessions)) {
-      return redirect(reply, "/dashboard/login");
-    }
-    return redirect(reply, "/dashboard");
+    const auth = requireOwnerSession(request, deps.sessions);
+    if (!auth) return redirect(reply, "/dashboard/login?returnTo=" + encodeURIComponent(request.url));
+    privateBrowserPage(reply);
+    const codeInput = (request.query as { code?: unknown }).code;
+    const code = typeof codeInput === "string" && /^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/.test(codeInput)
+      ? codeInput : "";
+    const token = ownerSessionToken(request)!;
+    return reply.type("text/html; charset=utf-8").send(renderPairingPage(code, csrf.tokenFor(token)));
+  });
+
+  app.get("/dashboard/devices/:deviceId/status", async (request, reply) => {
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth) return;
+    privateBrowserPage(reply);
+    const { deviceId } = request.params as { deviceId: string };
+    const device = deps.devices.findById(deviceId);
+    if (!device || device.ownerId !== auth.principal.ownerId) return reply.code(404).send({ error: "NOT_FOUND" });
+    const state = device.revokedAt !== null ? "REVOKED" : deps.registry.get(device.id)?.state ?? "OFFLINE";
+    return reply.send({ deviceId: device.id, state });
+  });
+
+  app.get("/dashboard/devices/:deviceId", async (request, reply) => {
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth) return;
+    interactivePage(reply);
+    const { deviceId } = request.params as { deviceId: string };
+    const device = deps.devices.findById(deviceId);
+    if (!device || device.ownerId !== auth.principal.ownerId) return reply.code(404).send();
+    const state = device.revokedAt !== null ? "REVOKED" : deps.registry.get(device.id)?.state ?? "OFFLINE";
+    return reply.type("text/html; charset=utf-8").send(renderDevicePage(device, state));
   });
 
   app.get("/dashboard", async (request, reply) => {
@@ -161,30 +224,34 @@ export function registerDashboardRoutes(
     return reply.type("text/html; charset=utf-8").send(renderMcpPage(mcpUrl));
   });
 
-  app.post("/dashboard/pairings/:userCode/approve", async (request, reply) => {
+  async function approveDashboardPairing(request: FastifyRequest, reply: FastifyReply) {
     const auth = requireDashboardAuth(request, reply, deps.sessions);
     if (!auth || !requireCsrf(request, reply, auth, csrf)) return;
 
-    const { userCode: pathCode } = request.params as { userCode: string };
-    const userCode = pathCode === "approve" ? bodyRecord(request).userCode : pathCode;
-    if (typeof userCode !== "string" || !/^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(userCode)) {
+    const pathCode = (request.params as { userCode?: unknown }).userCode;
+    const raw = pathCode ?? bodyRecord(request).userCode;
+    const compact = typeof raw === "string" ? raw.trim().toUpperCase().replace("-", "") : "";
+    if (!/^[A-HJ-NP-Z2-9]{8}$/.test(compact)) {
       return reply.code(400).send("Invalid pairing code");
     }
+    const userCode = compact.slice(0, 4) + "-" + compact.slice(4);
     const friendlyName = bodyRecord(request).friendlyName;
     try {
-      deps.pairings.approvePairing(
+      const device = deps.pairings.approvePairing(
         userCode,
-        typeof friendlyName === "string" ? friendlyName : "Unnamed Device",
+        typeof friendlyName === "string" ? friendlyName.slice(0, 80) : "Unnamed Device",
         auth.principal.ownerId,
       );
-      return redirect(reply, "/dashboard", 303);
+      return redirect(reply, pathCode ? "/dashboard" : "/dashboard/devices/" + encodeURIComponent(device.id), 303);
     } catch (error) {
-      if (error instanceof PairingNotFoundError) return reply.code(404).send();
-      if (error instanceof PairingExpiredError) return reply.code(410).send();
-      if (error instanceof PairingAlreadyApprovedError) return reply.code(409).send();
+      if (error instanceof PairingNotFoundError) return reply.code(404).send("Pairing code not found. Recheck the terminal.");
+      if (error instanceof PairingExpiredError) return reply.code(410).send("Pairing expired. Restart the Agent to get a new code.");
+      if (error instanceof PairingAlreadyApprovedError) return reply.code(409).send("Pairing code has already been used.");
       throw error;
     }
-  });
+  }
+  app.post("/dashboard/pairings/approve", approveDashboardPairing);
+  app.post("/dashboard/pairings/:userCode/approve", approveDashboardPairing);
 
   app.post("/dashboard/devices/:deviceId/rename", async (request, reply) => {
     const auth = requireDashboardAuth(request, reply, deps.sessions);

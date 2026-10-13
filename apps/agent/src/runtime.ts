@@ -10,6 +10,7 @@ import {
   type PairingUi,
 } from "./pairing/pair-device.js";
 import { RelayClient } from "./relay/relay-client.js";
+import { openVerificationLink, verificationLink } from "./pairing/browser.js";
 
 type RelayRunner = {
   run(signal: AbortSignal): Promise<void>;
@@ -26,10 +27,13 @@ export type AgentConnectOptions = {
   ) => RelayRunner;
 };
 
-function defaultPairingUi(): PairingUi {
+function defaultPairingUi(serverUrl: URL): PairingUi {
   return {
     showVerification({ verificationUri, userCode }) {
-      console.log(`Open ${verificationUri} and approve code ${userCode}`);
+      const link = verificationLink(serverUrl, verificationUri, userCode);
+      console.log(`Approve this computer at ${link} (code ${userCode}).`);
+      console.log("Access to local files and terminal commands requires your explicit approval.");
+      openVerificationLink(link);
     },
   };
 }
@@ -39,8 +43,8 @@ export async function runAgentConnect(
   signal: AbortSignal,
   options: AgentConnectOptions = {},
 ): Promise<void> {
-  const store = options.store ?? createCredentialStore();
-  const io = options.io ?? defaultPairingUi();
+  const store = options.store ?? createCredentialStore({ serverUrl });
+  const io = options.io ?? defaultPairingUi(serverUrl);
   const ensureCredential =
     options.ensureCredential ?? ensureDeviceCredential;
   const credential = await ensureCredential(serverUrl, store, io);

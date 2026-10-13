@@ -11,6 +11,7 @@ const entries = [
   ["scripts/build-agent-package.mjs", /version: "\d+\.\d+\.\d+",/, `version: "${version}",`],
   ["scripts/install-windows.ps1", /open-desktop-remote-agent@\d+\.\d+\.\d+/, `open-desktop-remote-agent@${version}`],
   ["scripts/install-macos.sh", /open-desktop-remote-agent@\d+\.\d+\.\d+/, `open-desktop-remote-agent@${version}`],
+  ["apps/server/src/dashboard/installer.ts", /AGENT_INSTALL_VERSION = "\d+\.\d+\.\d+"/, `AGENT_INSTALL_VERSION = "${version}"`],
 ];
 const patches = [];
 for (const [file, pattern, replacement] of entries) {
