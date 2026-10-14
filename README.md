@@ -180,10 +180,13 @@ SQLite migrations run on Server startup. Keep the backup until the upgraded Serv
 
 ```bash
 pnpm install
+pnpm governance:check
 pnpm test:run
 pnpm typecheck
 pnpm test:e2e
 ```
+
+For AI-assisted development, Codex and Claude share [the same project instructions](AGENTS.md). See the [AI task, worktree and acceptance workflow](docs/ai-project-management.zh-CN.md) before implementing an Issue or handing a task to another AI.
 
 Validate production Compose configuration with a test domain:
 

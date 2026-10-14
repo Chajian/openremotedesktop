@@ -12,6 +12,7 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test:e2e": "vitest run --config tests/e2e/vitest.config.ts",
     "security:scan": "node scripts/check-source-hygiene.mjs --all",
+    "governance:check": "node scripts/check-agent-governance.mjs",
     "security:hooks": "git config --local core.hooksPath .githooks",
     "agent:package": "node scripts/build-agent-package.mjs"
   },
