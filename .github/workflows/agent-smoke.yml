@@ -16,6 +16,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan staged source and Git history
+        run: node scripts/check-source-hygiene.mjs --all
       - uses: pnpm/action-setup@v4
         with:
           version: 10.12.3
