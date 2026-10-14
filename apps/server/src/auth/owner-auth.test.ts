@@ -180,3 +180,14 @@ describe("owner sessions and login route", () => {
     expect(sessions.verifyOwnerSession(rawToken)).toBeNull();
   });
 });
+
+it("returns a read-only account summary for local and GitHub users", async () => {
+  const db = createDatabase(":memory:");
+  const owners = new OwnerRepository(db);
+  const owner = await owners.bootstrapOwner({ password: "summary-test-passphrase" });
+  const gh = owners.findOrCreateGitHubUser("4242", "octo-cat");
+  expect(owners.getAccountSummary(owner.id)).toMatchObject({ id: owner.id, authSource: "local", githubLogin: null });
+  expect(owners.getAccountSummary(gh.id)).toMatchObject({ id: gh.id, authSource: "github", githubLogin: "octo-cat" });
+  expect(owners.getAccountSummary("missing")).toBeNull();
+  db.close();
+});

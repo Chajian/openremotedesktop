@@ -1,4 +1,14 @@
 import { randomBytes } from "node:crypto";
+import { renderOverview } from "./views/overview.js";
+import { renderDevices, type LiveDevice } from "./views/devices.js";
+import { renderDeviceDetail } from "./views/device-detail.js";
+import { renderMcp, displayClient } from "./views/mcp.js";
+import { renderSettings, type PasswordError } from "./views/settings.js";
+import { renderConfirm } from "./views/confirm.js";
+import type { NavKey, ShellContext } from "./ui/components.js";
+import { renderLogin } from "./views/login.js";
+import { renderErrorPage } from "./views/error.js";
+import { langCookie, safeLangReturnTo, localeFromRequest, t } from "./ui/i18n.js";
 import { readFileSync } from "node:fs";
 import { loginNonce, privateBrowserPage, safeReturnTo } from "./browser-auth.js";
 import type {
@@ -13,7 +23,7 @@ import {
   type OwnerPrincipal,
   type SessionRepository,
 } from "../auth/session-repository.js";
-import type { ServerConfig } from "../config.js";
+import { publicBaseUrlForHost, type ServerConfig } from "../config.js";
 import {
   DeviceNotFoundError,
   type DeviceRepository,
@@ -29,13 +39,8 @@ import type { OAuthClientRepository } from "../oauth/client-repository.js";
 import { sessionCookie } from "../routes/login.js";
 import { CsrfProtection } from "./csrf.js";
 import { installerSource } from "./installer.js";
-import { renderPairingPage, renderDevicePage } from "./onboarding.js";
+import { renderPairingPage } from "./onboarding.js";
 import { renderConnectPage, type AgentOs, type WizardStep } from "./wizard.js";
-import {
-  renderDashboard,
-  renderLoginPage,
-  renderMcpPage,
-} from "./templates.js";
 
 type AuthenticatedDashboard = {
   principal: OwnerPrincipal;
@@ -71,10 +76,12 @@ function requireCsrf(
   reply: FastifyReply,
   auth: AuthenticatedDashboard,
   csrf: CsrfProtection,
+  ctx: ShellContext,
+  backHref: string,
 ): boolean {
   const valid = csrf.verify(auth.sessionToken, bodyRecord(request).csrf);
   if (!valid) {
-    void reply.code(403).send("Invalid CSRF token");
+    void reply.code(403).type("text/html; charset=utf-8").send(renderErrorPage({ locale: ctx.locale, status: 403, kind: "expired", ctx, backHref }));
     return false;
   }
   return true;
@@ -94,24 +101,73 @@ export function registerDashboardRoutes(
 ): void {
   const csrf = new CsrfProtection();
 
+  function ownedDevices(ownerId: string): LiveDevice[] {
+    const live = new Map(deps.registry.snapshot().map(s => [s.deviceId, s.state]));
+    return deps.devices.listOwnedDevices(ownerId).map(d => ({ ...d, state: d.revokedAt !== null ? "REVOKED" : (live.get(d.id) ?? "OFFLINE") }));
+  }
+  function shell(request: FastifyRequest, auth: AuthenticatedDashboard, nav: NavKey | null): ShellContext {
+    return { locale: localeFromRequest(request), account: deps.owners.getAccountSummary(auth.principal.ownerId), nav, path: request.url, csrf: csrf.tokenFor(auth.sessionToken), publicBaseUrl: publicBaseUrlForHost(deps.config, request.headers.host) };
+  }
+  function dashboardError(request: FastifyRequest, reply: FastifyReply, auth: AuthenticatedDashboard, status: number, kind: "invalid" | "notFound" | "forbidden", backHref = "/dashboard/devices") {
+    const ctx = shell(request, auth, backHref.startsWith("/dashboard/mcp") ? "chatgpt" : backHref.startsWith("/dashboard/settings") ? "settings" : "devices");
+    return reply.code(status).type("text/html; charset=utf-8").send(renderErrorPage({ locale: ctx.locale, status, kind, backHref, ctx }));
+  }
+  function detail(request: FastifyRequest, reply: FastifyReply, auth: AuthenticatedDashboard, device: LiveDevice, renameError = false) {
+    interactivePage(reply);
+    return reply.type("text/html; charset=utf-8").send(renderDeviceDetail(shell(request, auth, "devices"), { device, now: Date.now(), renameError, paired: (request.query as Record<string, unknown>).paired === "1", hasClients: deps.oauthClients.listApprovedClients(auth.principal.ownerId).length > 0 }));
+  }
+
+  app.get("/dashboard/devices", async (request, reply) => {
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth) return;
+    const status = (request.query as Record<string, unknown>).status;
+    const filter = status === "online" || status === "attention" || status === "revoked" ? status : "all";
+    return reply.type("text/html; charset=utf-8").send(renderDevices(shell(request, auth, "devices"), { devices: ownedDevices(auth.principal.ownerId), filter, now: Date.now() }));
+  });
+  app.get("/dashboard/devices/:deviceId", async (request, reply) => {
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth) return;
+    const { deviceId } = request.params as { deviceId: string };
+    const device = ownedDevices(auth.principal.ownerId).find(d => d.id === deviceId);
+    if (!device) return dashboardError(request, reply, auth, 404, "notFound");
+    return detail(request, reply, auth, device);
+  });
+  app.get("/dashboard/devices/:deviceId/revoke", async (request, reply) => {
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth) return;
+    const { deviceId } = request.params as { deviceId: string };
+    const device = ownedDevices(auth.principal.ownerId).find(d => d.id === deviceId);
+    if (!device) return dashboardError(request, reply, auth, 404, "notFound");
+    const ctx = shell(request, auth, "devices");
+    const path = "/dashboard/devices/" + encodeURIComponent(device.id);
+    return reply.type("text/html; charset=utf-8").send(renderConfirm(ctx, { title: t(ctx.locale, "confirm.revokeDevice", { name: device.name }), bullets: (["confirm.credentials", "confirm.deviceAccess", "confirm.noFiles", "confirm.irreversible"] as const).map(key => t(ctx.locale, key)), action: path + "/revoke", submitLabel: t(ctx.locale, "device.revoke"), cancelHref: path, danger: true }));
+  });
+
+  app.get("/dashboard/lang", async (request, reply) => {
+    const query = request.query as Record<string, unknown>;
+    const to = query.to === "en" || query.to === "zh-CN" ? query.to : null;
+    if (to) reply.header("Set-Cookie", langCookie(to, deps.config.environment === "production"));
+    return redirect(reply, safeLangReturnTo(query.returnTo), 303);
+  });
+
   app.get("/dashboard/login", async (request, reply) => {
     privateBrowserPage(reply);
     const returnTo = safeReturnTo((request.query as Record<string, unknown>).returnTo);
     const nonce = loginNonce(request) ?? randomBytes(24).toString("base64url");
     reply.header("Set-Cookie", `odr_login_nonce=${nonce}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${deps.config.environment === "production" ? "; Secure" : ""}`);
-    return reply.type("text/html; charset=utf-8").send(renderLoginPage(returnTo, csrf.tokenFor(nonce), "", Boolean(deps.config.githubClientId && deps.config.githubClientSecret)));
+    return reply.type("text/html; charset=utf-8").send(renderLogin({ locale: localeFromRequest(request), returnTo, csrf: csrf.tokenFor(nonce), githubEnabled: Boolean(deps.config.githubClientId && deps.config.githubClientSecret), error: null }));
   });
 
   app.post("/dashboard/login", async (request, reply) => {
     privateBrowserPage(reply);
     const body = bodyRecord(request);
     const nonce = loginNonce(request);
-    if (!nonce || !csrf.verify(nonce, body.csrf)) return reply.code(403).send("Invalid login CSRF token. Reload the login page.");
+    if (!nonce || !csrf.verify(nonce, body.csrf)) return reply.code(403).type("text/html; charset=utf-8").send(renderErrorPage({ locale: localeFromRequest(request), status: 403, kind: "loginExpired", backHref: "/dashboard/login" }));
     const returnTo = safeReturnTo(body.returnTo);
     const password = body.password;
-    if (typeof password !== "string") return reply.code(400).send("Missing passphrase");
+    if (typeof password !== "string") return reply.code(400).type("text/html; charset=utf-8").send(renderLogin({ locale: localeFromRequest(request), returnTo, csrf: csrf.tokenFor(nonce), githubEnabled: Boolean(deps.config.githubClientId && deps.config.githubClientSecret), error: "missing" }));
     const owner = await deps.owners.verifyOwnerPassword(password);
-    if (!owner) return reply.code(401).type("text/html; charset=utf-8").send(renderLoginPage(returnTo, csrf.tokenFor(nonce), "Invalid credentials", Boolean(deps.config.githubClientId && deps.config.githubClientSecret)));
+    if (!owner) return reply.code(401).type("text/html; charset=utf-8").send(renderLogin({ locale: localeFromRequest(request), returnTo, csrf: csrf.tokenFor(nonce), githubEnabled: Boolean(deps.config.githubClientId && deps.config.githubClientSecret), error: "invalid" }));
     const token = deps.sessions.createOwnerSession(owner.id);
     reply.header("Set-Cookie", sessionCookie(token, deps.sessions.ttlMs, deps.config));
     return redirect(reply, returnTo, 303);
@@ -119,7 +175,7 @@ export function registerDashboardRoutes(
 
   app.post("/dashboard/logout", async (request, reply) => {
     const auth = requireDashboardAuth(request, reply, deps.sessions);
-    if (!auth || !requireCsrf(request, reply, auth, csrf)) return;
+    if (!auth || !requireCsrf(request, reply, auth, csrf, shell(request, auth, "overview"), "/dashboard")) return;
     deps.sessions.revokeSession(auth.sessionToken);
     reply.header("Set-Cookie", sessionCookie("", 0, deps.config));
     return redirect(reply, "/dashboard/login", 303);
@@ -157,7 +213,7 @@ export function registerDashboardRoutes(
     const os: AgentOs = query.os === "mac" || query.os === "linux" ? query.os : "win";
     const step: WizardStep = query.step === "2" ? 2 : query.step === "3" ? 3 : 1;
     return reply.type("text/html; charset=utf-8").send(renderConnectPage({
-      os, step, baseUrl: deps.config.publicBaseUrl,
+      os, step, baseUrl: publicBaseUrlForHost(deps.config, request.headers.host),
       enabled: deps.config.agentInstallEnabled === true,
       csrf: csrf.tokenFor(auth.sessionToken),
       ...(typeof query.code === "string" ? { code: query.code } : {}),
@@ -186,53 +242,47 @@ export function registerDashboardRoutes(
     return reply.send({ deviceId: device.id, state });
   });
 
-  app.get("/dashboard/devices/:deviceId", async (request, reply) => {
-    const auth = requireDashboardAuth(request, reply, deps.sessions);
-    if (!auth) return;
-    interactivePage(reply);
-    const { deviceId } = request.params as { deviceId: string };
-    const device = deps.devices.findById(deviceId);
-    if (!device || device.ownerId !== auth.principal.ownerId) return reply.code(404).send();
-    const state = device.revokedAt !== null ? "REVOKED" : deps.registry.get(device.id)?.state ?? "OFFLINE";
-    return reply.type("text/html; charset=utf-8").send(renderDevicePage(device, state));
-  });
 
   app.get("/dashboard", async (request, reply) => {
     const auth = requireDashboardAuth(request, reply, deps.sessions);
     if (!auth) return;
-
-    const live = new Map(
-      deps.registry.snapshot().map((status) => [status.deviceId, status]),
-    );
-    const devices = deps.devices.listOwnedDevices(auth.principal.ownerId).map((device) => ({
-      ...device,
-      state:
-        device.revokedAt !== null
-          ? "REVOKED"
-          : (live.get(device.id)?.state ?? "OFFLINE"),
-    }));
-
-    return reply
-      .type("text/html; charset=utf-8")
-      .send(
-        renderDashboard({
-          devices,
-          approvedClients: deps.oauthClients.listApprovedClients(auth.principal.ownerId),
-          csrf: csrf.tokenFor(auth.sessionToken),
-          canChangePassword: deps.owners.getOwner()?.id === auth.principal.ownerId,
-        }),
-      );
+    return reply.type("text/html; charset=utf-8").send(renderOverview(shell(request, auth, "overview"), { devices: ownedDevices(auth.principal.ownerId), clients: deps.oauthClients.listApprovedClients(auth.principal.ownerId), now: Date.now() }));
   });
 
+  function settingsPage(request: FastifyRequest, reply: FastifyReply, auth: AuthenticatedDashboard, passwordError: PasswordError | null = null) {
+    return reply.type("text/html; charset=utf-8").send(renderSettings(shell(request, auth, "settings"), { canChangePassword: deps.owners.getOwner()?.id === auth.principal.ownerId, saved: passwordError === null && (request.query as Record<string, unknown>).saved === "password", passwordError, liveDeviceCount: ownedDevices(auth.principal.ownerId).filter(d => d.state !== "REVOKED").length }));
+  }
   app.get("/dashboard/mcp", async (request, reply) => {
-    if (!requireDashboardAuth(request, reply, deps.sessions)) return;
-    const mcpUrl = new URL("/mcp", deps.config.publicBaseUrl).toString();
-    return reply.type("text/html; charset=utf-8").send(renderMcpPage(mcpUrl));
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth) return;
+    const mcpUrl = new URL("/mcp", publicBaseUrlForHost(deps.config, request.headers.host)).toString();
+    return reply.type("text/html; charset=utf-8").send(renderMcp(shell(request, auth, "chatgpt"), { mcpUrl, clients: deps.oauthClients.listApprovedClients(auth.principal.ownerId), now: Date.now() }));
+  });
+  app.get("/dashboard/settings", async (request, reply) => {
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth) return;
+    return settingsPage(request, reply, auth);
+  });
+  app.get("/dashboard/settings/revoke-all", async (request, reply) => {
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth) return;
+    const ctx = shell(request, auth, "settings");
+    const count = ownedDevices(auth.principal.ownerId).filter(d => d.state !== "REVOKED").length;
+    return reply.type("text/html; charset=utf-8").send(renderConfirm(ctx, { title: t(ctx.locale, "settings.revokeAll.confirm"), bullets: [t(ctx.locale, "settings.revokeAll.body", { count }), t(ctx.locale, "confirm.noFiles"), t(ctx.locale, "confirm.irreversible")], action: "/dashboard/devices/revoke-all", submitLabel: t(ctx.locale, "settings.revokeAll.title"), cancelHref: "/dashboard/settings", danger: true, confirmPhrase: t(ctx.locale, "settings.revokeAll.phrase") }));
+  });
+  app.get("/dashboard/clients/:clientId/revoke", async (request, reply) => {
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth) return;
+    const { clientId } = request.params as { clientId: string };
+    const client = deps.oauthClients.listApprovedClients(auth.principal.ownerId).find(c => c.clientId === clientId);
+    if (!client) return dashboardError(request, reply, auth, 404, "notFound", "/dashboard/mcp");
+    const ctx = shell(request, auth, "chatgpt"), who = displayClient(ctx, client);
+    return reply.type("text/html; charset=utf-8").send(renderConfirm(ctx, { title: t(ctx.locale, "confirm.revokeClient", { name: who.name ?? who.host }), bullets: [t(ctx.locale, "confirm.clientHost", { host: who.host }), t(ctx.locale, "confirm.clientTokens"), t(ctx.locale, "confirm.clientAccount"), t(ctx.locale, "confirm.noFiles"), t(ctx.locale, "confirm.clientAgain")], action: "/dashboard/clients/" + encodeURIComponent(clientId) + "/revoke", submitLabel: t(ctx.locale, "client.revoke"), cancelHref: "/dashboard/mcp", danger: true }));
   });
 
   async function approveDashboardPairing(request: FastifyRequest, reply: FastifyReply) {
     const auth = requireDashboardAuth(request, reply, deps.sessions);
-    if (!auth || !requireCsrf(request, reply, auth, csrf)) return;
+    if (!auth || !requireCsrf(request, reply, auth, csrf, shell(request, auth, null), bodyRecord(request).origin === "device" ? "/device" : "/dashboard/connect?step=3")) return;
 
     const pathCode = (request.params as { userCode?: unknown }).userCode;
     const raw = pathCode ?? bodyRecord(request).userCode;
@@ -261,56 +311,58 @@ export function registerDashboardRoutes(
 
   app.post("/dashboard/devices/:deviceId/rename", async (request, reply) => {
     const auth = requireDashboardAuth(request, reply, deps.sessions);
-    if (!auth || !requireCsrf(request, reply, auth, csrf)) return;
+    if (!auth || !requireCsrf(request, reply, auth, csrf, shell(request, auth, "devices"), "/dashboard/devices/" + encodeURIComponent((request.params as { deviceId: string }).deviceId))) return;
 
     const { deviceId } = request.params as { deviceId: string };
     const name = bodyRecord(request).name;
     if (typeof name !== "string" || !name.trim()) {
-      return reply.code(400).send("Invalid device name");
+      const device = ownedDevices(auth.principal.ownerId).find(d => d.id === deviceId);
+      reply.code(400);
+      return device ? detail(request, reply, auth, device, true) : dashboardError(request, reply, auth, 400, "invalid");
     }
     try {
       deps.devices.renameOwnedDevice(deviceId, auth.principal.ownerId, name);
-      return redirect(reply, "/dashboard", 303);
+      return redirect(reply, "/dashboard/devices/" + encodeURIComponent(deviceId), 303);
     } catch (error) {
-      if (error instanceof DeviceNotFoundError) return reply.code(404).send();
+      if (error instanceof DeviceNotFoundError) return dashboardError(request, reply, auth, 404, "notFound");
       throw error;
     }
   });
 
   app.post("/dashboard/devices/:deviceId/revoke", async (request, reply) => {
     const auth = requireDashboardAuth(request, reply, deps.sessions);
-    if (!auth || !requireCsrf(request, reply, auth, csrf)) return;
+    if (!auth || !requireCsrf(request, reply, auth, csrf, shell(request, auth, "devices"), "/dashboard/devices/" + encodeURIComponent((request.params as { deviceId: string }).deviceId))) return;
 
     const { deviceId } = request.params as { deviceId: string };
     try {
       deps.devices.revokeOwnedDevice(deviceId, auth.principal.ownerId);
-      return redirect(reply, "/dashboard", 303);
+      return redirect(reply, "/dashboard/devices/" + encodeURIComponent(deviceId), 303);
     } catch (error) {
-      if (error instanceof DeviceNotFoundError) return reply.code(404).send();
+      if (error instanceof DeviceNotFoundError) return dashboardError(request, reply, auth, 404, "notFound");
       throw error;
     }
   });
 
   app.post("/dashboard/devices/revoke-all", async (request, reply) => {
     const auth = requireDashboardAuth(request, reply, deps.sessions);
-    if (!auth || !requireCsrf(request, reply, auth, csrf)) return;
+    if (!auth || !requireCsrf(request, reply, auth, csrf, shell(request, auth, "settings"), "/dashboard/settings")) return;
     deps.devices.revokeAllOwnedDevices(auth.principal.ownerId);
-    return redirect(reply, "/dashboard", 303);
+    return redirect(reply, "/dashboard/devices", 303);
   });
 
   app.post("/dashboard/clients/:clientId/revoke", async (request, reply) => {
     const auth = requireDashboardAuth(request, reply, deps.sessions);
-    if (!auth || !requireCsrf(request, reply, auth, csrf)) return;
+    if (!auth || !requireCsrf(request, reply, auth, csrf, shell(request, auth, "chatgpt"), "/dashboard/mcp")) return;
     const { clientId } = request.params as { clientId: string };
     if (!deps.oauthClients.revokeClient(clientId, auth.principal.ownerId)) {
-      return reply.code(404).send("Authorized client not found");
+      return dashboardError(request, reply, auth, 404, "notFound", "/dashboard/mcp");
     }
-    return redirect(reply, "/dashboard", 303);
+    return redirect(reply, "/dashboard/mcp", 303);
   });
 
   app.post("/dashboard/password", async (request, reply) => {
     const auth = requireDashboardAuth(request, reply, deps.sessions);
-    if (!auth || !requireCsrf(request, reply, auth, csrf)) return;
+    if (!auth || !requireCsrf(request, reply, auth, csrf, shell(request, auth, "settings"), "/dashboard/settings")) return;
 
     const body = bodyRecord(request);
     if (
@@ -318,21 +370,22 @@ export function registerDashboardRoutes(
       typeof body.newPassword !== "string" ||
       body.newPassword.length < 12
     ) {
-      return reply.code(400).send("Invalid passphrase");
+      reply.code(400);
+      return settingsPage(request, reply, auth, "invalid");
     }
 
-    if (deps.owners.getOwner()?.id !== auth.principal.ownerId) return reply.code(403).send("Local Owner only");
+    if (deps.owners.getOwner()?.id !== auth.principal.ownerId) return dashboardError(request, reply, auth, 403, "forbidden", "/dashboard/settings");
     const changed = await deps.owners.changePassword(
       auth.principal.ownerId,
       body.currentPassword,
       body.newPassword,
     );
-    if (!changed) return reply.code(400).send("Current passphrase is incorrect");
+    if (!changed) { reply.code(400); return settingsPage(request, reply, auth, "incorrect"); }
 
     deps.sessions.invalidateOtherSessions(
       auth.principal.ownerId,
       auth.sessionToken,
     );
-    return redirect(reply, "/dashboard", 303);
+    return redirect(reply, "/dashboard/settings?saved=password", 303);
   });
 }

@@ -56,6 +56,7 @@ export type OAuthService = {
   tokens: SqliteOAuthTokenRepository;
   resourceContext: OAuthResourceContext;
   protectedResource: string;
+  allowedResources: ReadonlySet<string>;
   issuer: string;
   verifyAccessToken(token: string, resource: string): Promise<AuthInfo>;
 };
@@ -84,6 +85,9 @@ export function createOAuthService(
 
   const issuer = new URL("/", config.publicBaseUrl).toString();
   const protectedResource = new URL("/mcp", config.publicBaseUrl).toString();
+  const allowedResources = new Set([
+    config.publicBaseUrl, ...(config.additionalPublicBaseUrls ?? []),
+  ].map((url) => new URL("/mcp", url).toString()));
   const options: AuthorizationServerOptions = {
     ...DEFAULT_AUTHORIZATION_SERVER_OPTIONS,
     issuer,
@@ -132,6 +136,7 @@ export function createOAuthService(
     tokens,
     resourceContext,
     protectedResource,
+    allowedResources,
     issuer,
     verifyAccessToken: (token, resource) =>
       tokens.verifyAccessToken(token, resource),

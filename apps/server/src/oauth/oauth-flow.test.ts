@@ -423,8 +423,8 @@ describe("OAuth Authorization Code + PKCE", () => {
     await expect(oauth.verifyAccessToken(tokens.access_token, oauth.protectedResource))
       .resolves.toMatchObject({ clientId });
 
-    const dashboard = await app.inject({ method: "GET", url: "/dashboard", headers: { cookie } });
-    expect(dashboard.body).toContain(clientId);
+    const dashboard = await app.inject({ method: "GET", url: "/dashboard/mcp", headers: { cookie } });
+    expect(dashboard.body).toContain(encodeURIComponent(clientId));
     const revokeUrl = `/dashboard/clients/${clientId}/revoke`;
     const anonymous = await app.inject({ method: "POST", url: revokeUrl });
     expect(anonymous.statusCode).toBe(302);

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
 import { createDatabase } from "../db/database.js";
+import { renderConsentPage } from "./consent-page.js";
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { while (cleanup.length) await cleanup.pop()?.(); });
@@ -60,6 +61,12 @@ describe("browser OAuth login and explicit consent", () => {
     expect(consent.headers["content-security-policy"]).toContain("form-action 'self' https://client.example");
     expect(consent.body).toContain("client.example");
     expect(consent.body).toContain("offline_access");
+    expect(consent.body).toContain('name="decision" value="approve"');
+    expect(consent.body).toContain('name="decision" value="deny"');
+    expect(consent.body).toContain("https://client.example/callback");
+    expect(consent.body).not.toMatch(/<(?:script|link|img)\b/i);
+    expect(consent.body).toContain('data-view="consent"');
+    expect(consent.body).toContain("client.example wants to access your computers");
     expect(f.db.prepare("SELECT COUNT(*) AS n FROM oauth_codes").get()).toEqual({ n: 0 });
     const approved = await f.app.inject({ method: "POST", url: "/oauth/authorize", headers: {
       cookie: session, "content-type": "application/x-www-form-urlencoded",
@@ -119,5 +126,33 @@ describe("browser OAuth login and explicit consent", () => {
     expect(callback.searchParams.get("state")).toBe("return-state");
     expect(callback.searchParams.get("code")).toBeNull();
     expect(f.db.prepare("SELECT COUNT(*) AS n FROM oauth_codes").get()).toEqual({ n: 0 });
+  });
+});
+
+
+describe("Bridge consent presentation", () => {
+  const input = { returnTo: "/oauth/authorize?client_id=fixture&scope=mcp", csrf: 'a"b', clientId: '<client>&id', redirectUri: "https://client.example/callback?x=1&y=2", scope: "mcp offline_access" };
+  it("uses the bilingual Bridge layout and always shows complete client details", () => {
+    const page = renderConsentPage(input);
+    expect(page).toContain('class="solo-card"'); expect(page).toContain('class="mini-bridge"');
+    expect(page).toContain('client.example 请求访问你的电脑');
+    expect(page).toContain('client.example wants to access your computers');
+    expect(page).toContain('https://client.example/callback?x=1&amp;y=2');
+    expect(page).toContain('&lt;client&gt;&amp;id'); expect(page).not.toContain('<client>');
+    expect(page).toContain('mcp offline_access');
+    expect(page).toContain('data-capability="files"'); expect(page).toContain('data-capability="terminal"'); expect(page).toContain('data-capability="devices"');
+    expect(page).not.toMatch(/<(?:script|link|img)\b/i); expect(page).not.toContain('/dashboard/lang');
+  });
+  it("describes long-lived access only for the exact offline_access scope token", () => {
+    expect(renderConsentPage(input)).toContain('data-capability="offline_access"');
+    for (const scope of ["mcp", "mcp offline_access_extra"]) expect(renderConsentPage({ ...input, scope })).not.toContain('data-capability="offline_access"');
+  });
+  it("preserves escaped hidden field values and explicit approve/deny controls", () => {
+    const page = renderConsentPage(input);
+    expect(field(page, "csrf")).toBe(input.csrf); expect(field(page, "returnTo")).toBe(input.returnTo);
+    expect(page).toContain('<input type="hidden" name="csrf" value="a&quot;b">');
+    expect(page).toContain('method="post" action="/oauth/authorize"');
+    expect(page).toContain('name="decision" value="approve"'); expect(page).toContain('name="decision" value="deny"');
+    expect(page.indexOf('name="decision" value="deny"')).toBeLessThan(page.indexOf('name="decision" value="approve"'));
   });
 });

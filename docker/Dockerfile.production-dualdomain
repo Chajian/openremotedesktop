@@ -1,0 +1,9 @@
+# Use only with a verified production image ID; preserves the deployed runtime
+# and dependency lock instead of rebuilding unrelated components.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+ARG SOURCE_COMMIT
+LABEL org.opencontainers.image.source="https://github.com/Chajian/openremotedesktop"
+LABEL org.opencontainers.image.revision="${SOURCE_COMMIT}"
+COPY apps/server/src/ /app/apps/server/src/
+COPY scripts/install-windows.ps1 scripts/install-macos.sh /app/scripts/

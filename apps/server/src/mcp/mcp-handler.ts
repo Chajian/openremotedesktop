@@ -60,8 +60,8 @@ async function authenticateMcpRequest(
   oauth: OAuthService,
   config: ServerConfig,
 ): Promise<AuthInfo | null> {
-  const resource = mcpResourceUrl(config);
-  const resourceMetadataUrl = mcpResourceMetadataUrl(config);
+  const resource = mcpResourceUrl(config, request.headers.host);
+  const resourceMetadataUrl = mcpResourceMetadataUrl(config, request.headers.host);
   reply.header("Cache-Control", "no-store");
   if (!request.headers.authorization?.trim()) {
     // A first request is an OAuth discovery challenge, not a bad-token error.
@@ -94,7 +94,7 @@ function toWebRequest(
   request: FastifyRequest,
   config: ServerConfig,
 ): Request {
-  const url = new URL(request.url, config.publicBaseUrl);
+  const url = new URL(request.url, mcpResourceUrl(config, request.headers.host));
   const headers = new Headers();
   for (const [name, rawValue] of Object.entries(request.headers)) {
     if (rawValue === undefined) continue;
@@ -128,7 +128,8 @@ export function registerMcpRoutes(
     "/.well-known/oauth-protected-resource/mcp",
     "/.well-known/oauth-protected-resource",
   ]) {
-    app.get(path, async (_request, reply) => reply.send(buildMcpProtectedResourceMetadata(config)));
+    app.get(path, async (request, reply) => reply.header("Cache-Control", "no-store")
+      .send(buildMcpProtectedResourceMetadata(config, request.headers.host)));
   }
 
   app.route({
