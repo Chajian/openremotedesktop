@@ -1,5 +1,11 @@
 # Architecture
 
+## Scope: current source, not a production receipt
+
+This document describes the current repository implementation, including legacy local Owner compatibility **and** GitHub-backed accounts with user-scoped devices and MCP authorization. Earlier V1 single-Owner text was historical and must not be treated as a current feature limit. GitHub sign-in is conditional on configured OAuth credentials; this is not an organization/role administration system.
+
+For public-domain and production-specific constraints, see [dual-domain rollout](dual-domain-github-mcp.zh-CN.md). A passing source test or an updated document does not prove that a particular VPS image or Agent binary was deployed. Verify the deployed image and existing Dashboard before upgrading it.
+
 ## System boundary
 
 Open Desktop Remote is split into a self-hosted Server and one or more workstation Agents.
@@ -10,9 +16,9 @@ ChatGPT / MCP client
         | MCP Streamable HTTP + OAuth
         v
 Self-hosted Server
-  - OAuth / DCR
+  - OAuth / DCR and GitHub/legacy Owner login
   - MCP Gateway
-  - Device registry
+  - Per-user device registry
   - Relay router
   - Dashboard
   - SQLite
@@ -37,12 +43,12 @@ Desktop Commander 0.2.52
 
 The Server owns control-plane and relay concerns:
 
-- single-Owner identity and Dashboard session;
+- legacy password-based local Owner and optional GitHub-based account login, with scoped Dashboard sessions;
 - OAuth Authorization Code + PKCE;
 - DCR and OAuth discovery metadata;
-- durable device registration and revocation;
+- durable per-user device registration, ownership-scoped listing/routing and revocation;
 - live device connection registry and readiness;
-- mapping MCP tool calls to a target READY device;
+- validating MCP client approval, resource-bound access tokens and user ownership before routing calls to a target READY device;
 - request deadlines, cancellation and ambiguous-delivery reporting;
 - metadata-only logging by default.
 
@@ -69,10 +75,10 @@ MCP HTTP is stateless at the application boundary. A ChatGPT MCP request is not 
 
 Durable state in SQLite includes:
 
-- Owner credentials (hashed);
-- Dashboard sessions (hashed token verifier);
-- OAuth clients/codes/tokens (opaque token hashes);
-- device registrations and revocation;
+- local Owner password hashes and GitHub identity mappings (not GitHub access tokens);
+- per-account Dashboard sessions (hashed token verifier);
+- OAuth client registrations, per-user approvals, codes and tokens (opaque token hashes);
+- per-user device registrations and revocation;
 - device refresh credential verifiers;
 - durable device metadata such as last seen and versions.
 
@@ -120,7 +126,9 @@ Control tools are implemented by Open Desktop Remote itself:
 
 ## Routing
 
-- Explicit READY `deviceId`: route there.
+The Server first narrows visible device records and MCP grants to the authenticated account. An explicit device ID belonging to another user is treated as not found; being READY does not grant cross-user access.
+
+- Explicit authorized READY `deviceId`: route there.
 - Explicit unknown ID: `DEVICE_NOT_FOUND`.
 - Explicit known but disconnected ID: `DEVICE_OFFLINE`.
 - Explicit connected but not READY: `DEVICE_NOT_READY`.
@@ -141,10 +149,12 @@ Each remote call gets a UUID `requestId`.
 
 This is deliberately conservative for shell and file mutations.
 
-## Deployment
+## Deployment and compatibility
 
-The reference production topology is one Server container with a persistent `/data` volume and a Caddy container terminating public HTTPS.
+The repository's sample `docker-compose.yml` documents a self-hosted Server with durable `/data` and Caddy providing public HTTPS; Fastify should remain private, with only HTTPS ingress exposed. **This is a reference topology, not the current VPS deployment recipe.**
 
-Only ports 80/443 are exposed publicly. The internal Fastify port is not published.
+The existing deployment runbook describes a VPS/Nginx stack and persistent Server/database state; the exact running topology must be verified separately. Before a production update, inventory the running image and Dashboard routes, retain the current SQLite data with a verified backup/restore path, and compare the actual deployed UI with the candidate. Do not blindly replace the VPS stack with the repository's sample Caddy Compose. See [dual-domain production baseline and rollback](dual-domain-github-mcp.zh-CN.md).
 
-V1 does not implement HA, horizontal scaling or multi-owner tenancy.
+For multi-domain MCP access, each trusted HTTPS origin has its own resource audience; the established OAuth issuer and previously authorized clients/devices must continue to work. New origins must be explicitly configured and validated, with independent browser cookies and no cross-resource bearer-token replay.
+
+The repository implements legacy Owner and separate GitHub-backed users with per-account device/MCP isolation. This **does not imply** organization administration, shared devices, high availability or horizontal Server scaling; those remain out of scope unless independently specified and tested.

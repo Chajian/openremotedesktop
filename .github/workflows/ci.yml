@@ -26,7 +26,7 @@ jobs:
           cache: pnpm
       - name: Install
         run: pnpm install --frozen-lockfile
-      - name: AI project documentation and task check
+      - name: Validate AI instructions and documentation structure
         run: pnpm governance:check
       - name: Unit and integration tests
         run: pnpm test:run

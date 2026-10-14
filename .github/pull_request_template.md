@@ -1,6 +1,6 @@
-## Purpose and linked issue
+## Purpose (issue optional)
 
-- Linked issue:
+- Linked issue, if one exists:
 - User-visible outcome and reason:
 
 ## Change scope
@@ -16,9 +16,12 @@
 | `pnpm governance:check` | | |
 | `pnpm test:run` / targeted unit checks | | |
 | `pnpm typecheck` | | |
-| `pnpm test:e2e` / auth and device isolation | | |
+| `pnpm test:e2e` / auth, OAuth audience and device isolation | | |
 | Windows, macOS, Linux Agent smoke if affected | | |
 | Real device install / pairing / READY / upgrade if affected | | |
+| Dual-domain issuer/resource, deployed UI baseline and SQLite backup if affected | | |
+| Agent version/tag and npm staged 2FA / public availability if releasing | | |
+| Install-flag default OFF, matching scripts/checksums if releasing | | |
 | `node scripts/check-source-hygiene.mjs --staged` | | |
 
 ## Risks, rollback, and remaining work
@@ -26,7 +29,8 @@
 - What could break, including privacy and auth boundaries:
 - Rollback or recovery plan:
 - Failed or unverified checks (never describe these as passed):
-- Release or deployment authorization, if needed:
+- Release or deployment authorization, if needed (not implied by PR approval):
+- Real staging/production checks are not covered by mocked or static CI:
 
 ## Handoff
 

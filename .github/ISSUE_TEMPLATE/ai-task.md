@@ -1,6 +1,6 @@
 ---
 name: AI engineering task
-about: Scoped, verifiable task for Codex, Claude, or a human contributor
+about: Optional tracking for cross-session, collaborative, or substantial development tasks
 title: "[Task] "
 labels: []
 assignees: ""
@@ -8,7 +8,7 @@ assignees: ""
 
 ## Goal / user-visible result
 
-Describe the desired behavior and why it matters.
+Use this for substantive, cross-session or public tasks; small local fixes do not need an Issue. Describe the desired behavior and why it matters.
 
 ## Scope, non-goals, and ownership
 
@@ -26,9 +26,11 @@ Describe the desired behavior and why it matters.
 | Gate | Planned command or scenario | Result / evidence |
 | --- | --- | --- |
 | Unit / type / contract | | Not run |
-| Multi-user / MCP E2E | | Not run |
+| Multi-user / MCP E2E, including deny/refresh/revoke | | Not run |
+| Trusted origins, OAuth issuer/resource audience, if affected | | Not run |
 | Real Windows / macOS Agent or installer, if affected | | Unverified |
-| Release / rollout, if affected | | Not authorized |
+| Agent tag, npm staging + human 2FA, version/checksums, if affected | | Not authorized |
+| VPS Nginx, exact image/UI baseline and SQLite rollback, if affected | | Unverified |
 
 ## Cross-agent handoff (update during work)
 
