@@ -14,7 +14,7 @@ describe("tenant boundaries at HTTP entrypoints", () => {
     });
     try {
       const users = new OwnerRepository(db);
-      await users.bootstrapOwner({ password: "legacy-root-test" });
+      const owner = await users.bootstrapOwner({ password: "legacy-root-test" });
       const alice = users.findOrCreateGitHubUser("101", "alice");
       const bob = users.findOrCreateGitHubUser("202", "bob");
       const sessions = new SessionRepository(db);
@@ -29,7 +29,12 @@ describe("tenant boundaries at HTTP entrypoints", () => {
       const aliceDashboard = await app.inject({method: "GET", url: "/dashboard", headers: {cookie: aliceCookie}});
       expect(aliceDashboard.body).toContain("OnlyAlice");
       expect(aliceDashboard.body).not.toContain("OnlyBob");
-      expect(aliceDashboard.body).not.toContain("Change passphrase");
+      const aliceSettings = await app.inject({ method: "GET", url: "/dashboard/settings", headers: { cookie: aliceCookie } });
+      expect(aliceSettings.statusCode).toBe(200);
+      expect(aliceSettings.body).not.toContain('action="/dashboard/password"');
+      const ownerSettings = await app.inject({ method: "GET", url: "/dashboard/settings", headers: { cookie: "odr_session=" + sessions.createOwnerSession(owner.id) } });
+      expect(ownerSettings.statusCode).toBe(200);
+      expect(ownerSettings.body).toContain('action="/dashboard/password"');
 
       const patchBob = await app.inject({method: "PATCH", url: "/api/devices/" + bobDevice.id, headers: {cookie: aliceCookie}, payload: {name: "Hacked"}});
       expect(patchBob.statusCode).toBe(404);

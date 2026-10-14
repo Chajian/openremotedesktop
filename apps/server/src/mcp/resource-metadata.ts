@@ -3,23 +3,24 @@ import {
   getOAuthProtectedResourceMetadataUrl,
   type OAuthProtectedResourceMetadata,
 } from "@modelcontextprotocol/server";
-import type { ServerConfig } from "../config.js";
+import { publicBaseUrlForHost, type ServerConfig } from "../config.js";
 import { buildAuthorizationServerMetadata } from "../oauth/metadata.js";
 
-export function mcpResourceUrl(config: ServerConfig): URL {
-  return new URL("/mcp", config.publicBaseUrl);
+export function mcpResourceUrl(config: ServerConfig, host?: string): URL {
+  return new URL("/mcp", publicBaseUrlForHost(config, host));
 }
 
-export function mcpResourceMetadataUrl(config: ServerConfig): string {
-  return getOAuthProtectedResourceMetadataUrl(mcpResourceUrl(config));
+export function mcpResourceMetadataUrl(config: ServerConfig, host?: string): string {
+  return getOAuthProtectedResourceMetadataUrl(mcpResourceUrl(config, host));
 }
 
 export function buildMcpProtectedResourceMetadata(
   config: ServerConfig,
+  host?: string,
 ): OAuthProtectedResourceMetadata {
   return buildOAuthProtectedResourceMetadata({
     oauthMetadata: buildAuthorizationServerMetadata(config.publicBaseUrl),
-    resourceServerUrl: mcpResourceUrl(config),
+    resourceServerUrl: mcpResourceUrl(config, host),
     scopesSupported: ["mcp"],
     resourceName: "Open Desktop Remote",
     dangerouslyAllowInsecureIssuerUrl:

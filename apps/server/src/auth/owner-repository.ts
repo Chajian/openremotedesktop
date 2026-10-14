@@ -2,6 +2,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 import type BetterSqlite3 from "better-sqlite3";
 import { hashPassword, verifyPassword } from "./password.js";
 
+export type AccountSummary = { id: string; authSource: "local" | "github"; githubLogin: string | null; createdAt: number };
+
 export type Owner = {
   id: string;
   createdAt: number;
@@ -22,6 +24,13 @@ export class OwnerAlreadyInitializedError extends Error {
 
 export class OwnerRepository {
   constructor(private readonly db: BetterSqlite3.Database) {}
+
+  getAccountSummary(userId: string): AccountSummary | null {
+    const row = this.db.prepare(
+      "SELECT id, auth_source AS authSource, github_login AS githubLogin, created_at AS createdAt FROM owner WHERE id = ?",
+    ).get(userId) as AccountSummary | undefined;
+    return row ?? null;
+  }
 
   async bootstrapOwner(input: { password: string }): Promise<Owner> {
     const passwordHash = await hashPassword(input.password);

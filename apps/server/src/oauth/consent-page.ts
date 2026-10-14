@@ -1,21 +1,34 @@
-import { escapeHtml } from "../dashboard/templates.js";
+import { html, type SafeHtml } from "../dashboard/ui/html.js";
+import { hiddenInput, soloDocument } from "../dashboard/ui/components.js";
+import { icon, type IconName } from "../dashboard/ui/icons.js";
+import { t, type MessageKey } from "../dashboard/ui/i18n.js";
+
+function bilingual(key: MessageKey, params: Record<string, string | number> = {}): SafeHtml {
+  return html`<span lang="zh-CN">${t("zh-CN", key, params)}</span><small lang="en" class="muted" style="display:block;font-size:.82em;font-weight:400;margin-top:4px">${t("en", key, params)}</small>`;
+}
 
 export function renderConsentPage(input: {
   returnTo: string; csrf: string; clientId: string; redirectUri: string; scope: string;
 }): string {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
-<title>Open Desktop Remote - Authorize</title>
-<style>body{font-family:system-ui;max-width:760px;margin:3rem auto;padding:1rem}code{overflow-wrap:anywhere}button{margin:1rem;padding:.7rem}</style>
-</head><body><h1>连接 Open Desktop Remote</h1>
-<p>此客户端请求通过你的设备读取和修改文件、运行终端命令。只批准你刚刚主动添加且信任的客户端。</p>
-<p>Client ID: <code>${escapeHtml(input.clientId)}</code></p>
-<p>Callback: <code>${escapeHtml(input.redirectUri)}</code></p>
-<p>Scopes: <code>${escapeHtml(input.scope)}</code></p>
-<p>授权后客户端可以调用已配对设备上的工具；这不是只读权限。不要批准不认识的回调地址。</p>
-<form method="post" action="/oauth/authorize">
-<input type="hidden" name="csrf" value="${escapeHtml(input.csrf)}">
-<input type="hidden" name="returnTo" value="${escapeHtml(input.returnTo)}">
-<button type="submit" name="decision" value="approve">允许连接 / Allow</button>
-<button type="submit" name="decision" value="deny">拒绝 / Deny</button>
-</form></body></html>`;
+  const host = new URL(input.redirectUri).host;
+  const capabilities: Array<{ id: string; icon: IconName; title: MessageKey; desc: MessageKey }> = [
+    { id: "files", icon: "folder", title: "consent.files", desc: "consent.filesDesc" },
+    { id: "terminal", icon: "terminal", title: "consent.terminal", desc: "consent.terminalDesc" },
+    { id: "devices", icon: "monitor", title: "consent.devices", desc: "consent.devicesDesc" },
+  ];
+  if (input.scope.split(/\s+/).includes("offline_access")) capabilities.push({ id: "offline_access", icon: "history", title: "consent.offline", desc: "consent.offlineDesc" });
+  const body = html`<main class="solo-card" data-view="consent">
+    <div class="mini-bridge"><span class="t">${icon("messageText", 24)}</span><span class="l"></span><span class="t hub">${icon("logo", 24)}</span></div>
+    <h1 class="h1" style="text-align:center;overflow-wrap:anywhere">${bilingual("consent.title", { host })}</h1>
+    <p class="lead" style="text-align:center;font-size:15px">${bilingual("consent.lead")}</p>
+    <ul class="scope">${capabilities.map(item => html`<li data-capability="${item.id}"><span class="ic">${icon(item.icon, 18)}</span><div>${bilingual(item.title)}<div class="fine" style="margin-top:6px">${bilingual(item.desc)}</div></div></li>`)}</ul>
+    <dl class="detail-box"><dt>${bilingual("consent.callback")}</dt><dd class="hl">${input.redirectUri}</dd><dt>${bilingual("consent.clientId")}</dt><dd>${input.clientId}</dd><dt>${bilingual("consent.scope")}</dt><dd>${input.scope}</dd></dl>
+    <div class="callout busy" style="margin-top:16px">${icon("alert", 18)}<p>${bilingual("consent.warning")}</p></div>
+    <form method="post" action="/oauth/authorize" class="row" style="margin-top:22px;align-items:stretch;gap:12px">
+      ${hiddenInput("csrf", input.csrf)}${hiddenInput("returnTo", input.returnTo)}
+      <button type="submit" name="decision" value="deny" class="btn btn-secondary btn-lg" style="flex:1;min-width:0;height:auto;padding:10px;white-space:normal"><span>${bilingual("consent.deny")}</span></button>
+      <button type="submit" name="decision" value="approve" class="btn btn-primary btn-lg" style="flex:1.5;min-width:0;height:auto;padding:10px;white-space:normal"><span>${bilingual("consent.approve")}</span></button>
+    </form>
+  </main>`;
+  return soloDocument({ locale: "zh-CN", title: t("zh-CN", "consent.title", { host }), body, footer: bilingual("consent.footer"), langSwitchPath: null, enhance: false });
 }

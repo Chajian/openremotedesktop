@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { SessionRepository } from "../auth/session-repository.js";
 import { requireOwnerSession } from "../auth/session-repository.js";
+import { publicBaseUrlForHost, type ServerConfig } from "../config.js";
 import {
   PairingAlreadyApprovedError,
   PairingExpiredError,
@@ -12,9 +13,13 @@ export function registerDevicePairingRoutes(
   app: FastifyInstance,
   pairings: PairingService,
   sessions: SessionRepository,
+  config: ServerConfig,
 ): void {
-  app.post("/api/device-pairings", async (_request, reply) => {
-    return reply.code(201).send(pairings.createPairing());
+  app.post("/api/device-pairings", async (request, reply) => {
+    return reply.code(201).send({
+      ...pairings.createPairing(),
+      verificationUri: new URL("/device", publicBaseUrlForHost(config, request.headers.host)).toString(),
+    });
   });
 
   app.get("/api/device-pairings/poll", async (request, reply) => {

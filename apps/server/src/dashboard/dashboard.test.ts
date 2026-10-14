@@ -55,6 +55,12 @@ function csrfFrom(html: string): string {
   return match[1]!;
 }
 
+function pairingFormAction(html: string): string {
+  const match = /<form[^>]*action="([^"]+)"[^>]*>(?:(?!<\/form>)[\s\S])*name="userCode"/.exec(html);
+  if (!match) throw new Error("pairing form missing");
+  return match[1]!;
+}
+
 describe("multi-account sign-out", () => {
   it("invalidates only the current session and clears its cookie", async () => {
     const { app, db, login } = await fixture();
@@ -106,12 +112,16 @@ describe("Owner Dashboard", () => {
     });
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain(device.id.slice(0, 8));
-    expect(response.body).toContain("win32");
-    expect(response.body).toContain("0.1.0");
-    expect(response.body).toContain("0.2.52");
+    expect(response.body).toContain(`data-device-id="${device.id}"`);
+    expect(response.body).toContain('data-state="OFFLINE"');
+    const detail = await app.inject({ method: "GET", url: `/dashboard/devices/${device.id}`, headers: { cookie } });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.body).toContain("win32");
+    expect(detail.body).toContain("0.1.0");
+    expect(detail.body).toContain("0.2.52");
     expect(response.body).toContain("OFFLINE");
     expect(response.body).not.toContain(pairing.json().userCode);
-    expect(response.body).toContain("Pair a computer");
+    expect(response.body).toContain('href="/dashboard/connect"');
     expect(response.body).not.toContain("<b>unsafe name</b>");
     expect(response.body).toContain("&lt;b&gt;unsafe name&lt;/b&gt;");
   });
@@ -177,6 +187,40 @@ describe("Owner Dashboard", () => {
     expect(approved.statusCode).toBe(303);
     expect(new DeviceRepository(db).listDevices()[0]?.name).toBe("Game PC");
   });
+
+  it("approves a pairing code submitted through the rendered pairing form", async () => {
+    const { app, db, login } = await fixture();
+    const { cookie } = await login();
+    const pairing = (await app.inject({ method: "POST", url: "/api/device-pairings" })).json();
+    const page = await app.inject({ method: "GET", url: "/dashboard/connect?step=3", headers: { cookie } });
+    const action = pairingFormAction(page.body);
+
+    const approved = await app.inject({
+      method: "POST",
+      url: action,
+      headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
+      payload: `csrf=${encodeURIComponent(csrfFrom(page.body))}&userCode=${pairing.userCode}&friendlyName=Game%20PC`,
+    });
+    expect(approved.statusCode).toBe(303);
+    expect(approved.headers.location).toMatch(/^\/dashboard\/devices\/[0-9a-f-]+$/);
+    expect(new DeviceRepository(db).listDevices()[0]?.name).toBe("Game PC");
+  });
+
+  it("rejects the rendered pairing form without a CSRF token", async () => {
+    const { app, db, login } = await fixture();
+    const { cookie } = await login();
+    const pairing = (await app.inject({ method: "POST", url: "/api/device-pairings" })).json();
+    const page = await app.inject({ method: "GET", url: "/dashboard/connect?step=3", headers: { cookie } });
+
+    const rejected = await app.inject({
+      method: "POST",
+      url: pairingFormAction(page.body),
+      headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
+      payload: `userCode=${pairing.userCode}&friendlyName=Game%20PC`,
+    });
+    expect(rejected.statusCode).toBe(403);
+    expect(new DeviceRepository(db).listDevices()).toHaveLength(0);
+  });
   it("shows MCP URL and rotates the owner passphrase while invalidating other sessions", async () => {
     const { app, login } = await fixture();
     const first = await login();
@@ -192,7 +236,7 @@ describe("Owner Dashboard", () => {
 
     const page = await app.inject({
       method: "GET",
-      url: "/dashboard",
+      url: "/dashboard/settings",
       headers: { cookie: first.cookie },
     });
     const csrf = csrfFrom(page.body);
@@ -207,6 +251,7 @@ describe("Owner Dashboard", () => {
         `csrf=${encodeURIComponent(csrf)}&currentPassword=old-test-passphrase-123&newPassword=new-test-passphrase-456`,
     });
     expect(changed.statusCode).toBe(303);
+    expect(changed.headers.location).toBe("/dashboard/settings?saved=password");
     expect((await login("old-test-passphrase-123")).response.statusCode).toBe(401);
     expect((await login("new-test-passphrase-456")).response.statusCode).toBe(204);
 

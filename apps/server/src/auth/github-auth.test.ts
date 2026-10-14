@@ -10,11 +10,12 @@ afterEach(async () => {
   for (const { app, db } of apps.splice(0)) { await app.close(); db.close(); }
 });
 
-function fixture() {
+function fixture(dualDomain = false) {
   const db = createDatabase(":memory:");
   const app = buildApp({db, config: {
     databasePath: ":memory:",
     publicBaseUrl: new URL("https://remote.example.com"),
+    ...(dualDomain ? { additionalPublicBaseUrls: [new URL("https://new.example.com")] } : {}),
     environment: "test",
     githubClientId: "test-github-app-id",
     githubClientSecret: "test-github-app-secret",
@@ -23,13 +24,15 @@ function fixture() {
   return {app,db};
 }
 
-async function githubLogin(app: ReturnType<typeof buildApp>, githubId: number, login: string) {
+async function githubLogin(app: ReturnType<typeof buildApp>, githubId: number, login: string, host = "remote.example.com") {
   const outgoing: string[] = [];
+  const expectedCallback = `https://${host}/auth/github/callback`;
   vi.stubGlobal("fetch", vi.fn(async (url: string, options: RequestInit) => {
     outgoing.push(String(url));
     if (String(url).endsWith("/login/oauth/access_token")) {
       const body = String(options.body);
       expect(new URLSearchParams(body).get("code_verifier")).toBeTruthy();
+      expect(new URLSearchParams(body).get("redirect_uri")).toBe(expectedCallback);
       return new Response(JSON.stringify({access_token: "test-provider-token", token_type: "bearer"}), {status: 200});
     }
     if (String(url).endsWith("/user")) {
@@ -38,10 +41,11 @@ async function githubLogin(app: ReturnType<typeof buildApp>, githubId: number, l
     }
     throw new Error("Unexpected provider URL");
   }));
-  const start = await app.inject({method: "GET", url: "/auth/github?returnTo=%2Fdashboard"});
+  const start = await app.inject({method: "GET", url: "/auth/github?returnTo=%2Fdashboard", headers: {host}});
   expect(start.statusCode).toBe(302);
   const authorizeUrl = new URL(String(start.headers.location));
   expect(authorizeUrl.hostname).toBe("github.com");
+  expect(authorizeUrl.searchParams.get("redirect_uri")).toBe(expectedCallback);
   expect(authorizeUrl.searchParams.get("code_challenge_method")).toBe("S256");
   const state = authorizeUrl.searchParams.get("state")!;
   expect(state.length).toBeGreaterThan(24);
@@ -49,7 +53,7 @@ async function githubLogin(app: ReturnType<typeof buildApp>, githubId: number, l
   const callback = await app.inject({
     method: "GET",
     url: "/auth/github/callback?code=github-code&state=" + encodeURIComponent(state),
-    headers: {cookie: nonceCookie},
+    headers: {host, cookie: nonceCookie},
   });
   expect(callback.statusCode).toBe(303);
   expect(callback.headers.location).toBe("/dashboard");
@@ -61,7 +65,7 @@ async function githubLogin(app: ReturnType<typeof buildApp>, githubId: number, l
   const replay = await app.inject({
     method: "GET",
     url: "/auth/github/callback?code=github-code&state=" + encodeURIComponent(state),
-    headers: {cookie: nonceCookie},
+    headers: {host, cookie: nonceCookie},
   });
   expect(replay.statusCode).toBe(403);
   return "odr_session=" + sessionCookie![1];
@@ -87,6 +91,36 @@ describe("GitHub login as an independent local identity", () => {
       headers: {cookie: String(start.headers["set-cookie"]).split(";")[0]!},
     });
     expect(callback.statusCode).toBe(403);
+  });
+
+  it("uses the requested trusted domain for GitHub callback and the same user identity", async () => {
+    const {app, db} = fixture(true);
+    const newCookie = await githubLogin(app, 852, "same-account", "new.example.com");
+    expect((await app.inject({method: "GET", url: "/dashboard", headers: {
+      host: "new.example.com", cookie: newCookie,
+    }})).statusCode).toBe(200);
+    await githubLogin(app, 852, "same-account");
+    expect(db.prepare("SELECT COUNT(*) AS n FROM owner WHERE github_user_id = '852'").get()).toEqual({n: 1});
+  });
+
+  it("refuses cross-domain GitHub callback reuse and ignores forwarded-host spoofing", async () => {
+    const {app} = fixture(true);
+    const start = await app.inject({method: "GET", url: "/auth/github", headers: {
+      host: "new.example.com",
+    }});
+    const authorizeUrl = new URL(String(start.headers.location));
+    const nonce = String(start.headers["set-cookie"]).split(";")[0]!;
+    const wrongDomain = await app.inject({method: "GET",
+      url: "/auth/github/callback?code=x&state=" + authorizeUrl.searchParams.get("state"),
+      headers: {host: "remote.example.com", cookie: nonce},
+    });
+    expect(wrongDomain.statusCode).toBe(403);
+
+    const spoof = await app.inject({method: "GET", url: "/auth/github", headers: {
+      host: "untrusted.example.com", "x-forwarded-host": "new.example.com",
+    }});
+    expect(new URL(String(spoof.headers.location)).searchParams.get("redirect_uri"))
+      .toBe("https://remote.example.com/auth/github/callback");
   });
 
   it("does not expose GitHub login when credentials are absent", async () => {

@@ -32,6 +32,24 @@ describe("production server config", () => {
     ).toThrow(/https/i);
   });
 
+  it("parses secondary HTTPS origins without changing the OAuth issuer", () => {
+    const env = {NODE_ENV:"production",ODR_PUBLIC_BASE_URL:"https://www.xiaofenmao.xyz"};
+    const config = loadServerConfig({...env,
+      ODR_ADDITIONAL_PUBLIC_BASE_URLS:"https://openremotedesktop.com"});
+    expect(config.publicBaseUrl.origin).toBe("https://www.xiaofenmao.xyz");
+    expect(config.additionalPublicBaseUrls?.map((x) => x.origin))
+      .toEqual(["https://openremotedesktop.com"]);
+    for (const invalid of [
+      "https://www.xiaofenmao.xyz", "http://openremotedesktop.com",
+      "https://openremotedesktop.com/extra",
+      "https://openremotedesktop.com?query=1",
+      "https://openremotedesktop.com,https://openremotedesktop.com",
+    ]) {
+      expect(() => loadServerConfig({...env,ODR_ADDITIONAL_PUBLIC_BASE_URLS:invalid}))
+        .toThrow(/ODR_ADDITIONAL_PUBLIC_BASE_URLS/);
+    }
+  });
+
   it("allows localhost HTTP in development", () => {
     const config = loadServerConfig({
       NODE_ENV: "development",
