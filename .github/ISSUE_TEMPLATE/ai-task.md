@@ -40,4 +40,4 @@ Use this for substantive, cross-session or public tasks; small local fixes do no
 - Next action and how to verify it:
 - Blockers, risks and unverified scenarios:
 
-Do not paste real secrets, private machine identifiers, production IPs, local logs or tool payloads into a public issue.
+**Public Issue privacy rule:** Use sanitized descriptions only. Do not paste personal names/contact details, identifiable device data, VPS addresses, SSH usernames/endpoints, internal topology, production configuration, unredacted screenshots, logs, credentials or tool payloads. Keep real operations records outside GitHub.
