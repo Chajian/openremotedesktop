@@ -19,6 +19,16 @@ coverage
 **/secrets
 **/private-secrets
 **/private-data
+**/.private
+**/ops-private
+**/server-private
+**/server-inventory
+**/private-deployment
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfvars
+**/*.rdp
+**/*.ovpn
 **/backups
 **/id_rsa*
 **/id_ed25519*

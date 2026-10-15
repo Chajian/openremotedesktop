@@ -16,6 +16,8 @@ jobs:
           persist-credentials: false
       - name: Scan staged source and complete Git history
         run: node scripts/check-source-hygiene.mjs --all
+      - name: Check newly added private information
+        run: node scripts/check-privacy-additions.mjs --branch
       - uses: pnpm/action-setup@v4
         with:
           version: 10.12.3

@@ -31,6 +31,18 @@ coverage/
 *.log
 .superpowers/
 
+# Never commit private workstation, server or infrastructure inventories.
+.private/
+ops-private/
+server-private/
+server-inventory/
+private-deployment/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.rdp
+*.ovpn
+
 # Per-machine startup helpers and private operations records.
 # These intentionally remain available on an owner's device but not in Git.
 /scripts/check-windows-identity.cjs

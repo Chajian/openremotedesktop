@@ -31,6 +31,8 @@
 - Failed or unverified checks (never describe these as passed):
 - Release or deployment authorization, if needed (not implied by PR approval):
 - Real staging/production checks are not covered by mocked or static CI:
+- [ ] Privacy review: the diff, commit messages, PR body, screenshots and CI artifacts contain no personal identifiers, private device details, VPS IPs, SSH endpoints, private deployment inventory or sensitive logs.
+- [ ] Any retained endpoint is an intentionally public product address; examples use reserved placeholders.
 
 ## Handoff
 
