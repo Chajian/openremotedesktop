@@ -121,7 +121,11 @@ function tokens(source) {
   return output;
 }
 function checkSource(source, path, errors) {
-  const parts = tokens(source);
+  // Recognize both Windows separators and their doubled JS-literal spelling.
+  // This normalization inspects recognizable paths without evaluating code.
+  const parts = tokens(source).map((token) => token.type === "string"
+    ? { ...token, value: token.value.replace(/\\+/g, "/") }
+    : token);
   for (let index = 0; index < parts.length; index++) {
     const token = parts[index];
     if (token.type !== "string" || !token.value.includes(`${upstream}/`)) continue;
@@ -158,14 +162,14 @@ export function checkInstalledPackage({ installedPackagePath, baseline = publish
     }
   }
   // Runtime data and dependency closures are outside this published-file set.
-  // Added code, executable bits, shebangs and symlinks are rejected elsewhere.
+  // Added code, loader metadata, executable bits, shebangs and symlinks fail.
   try {
     walk(packageRoot, (full, entry) => {
       const path = slash(relative(packageRoot, full));
       if (Object.hasOwn(baseline.files, path)) return;
       const stat = lstatSync(full);
-      if (entry.isSymbolicLink() || codeExtension.test(path) || (stat.mode & 0o111) || (stat.isFile() && readFileSync(full).subarray(0, 2).toString() === "#!")) {
-        errors.push(`Installed upstream added executable/code file or symlink: ${path}`);
+      if (entry.isSymbolicLink() || basename(full).toLowerCase() === "package.json" || codeExtension.test(path) || (stat.mode & 0o111) || (stat.isFile() && readFileSync(full).subarray(0, 2).toString() === "#!")) {
+        errors.push(`Installed upstream added executable/code file, package.json loader metadata or symlink: ${path}`);
       }
     }, new Set(["node_modules"]));
   } catch { errors.push("Installed upstream package tree is unreadable."); }
