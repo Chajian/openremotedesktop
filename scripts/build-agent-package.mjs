@@ -13,13 +13,14 @@ await rm(output, { recursive: true, force: true });
 await mkdir(dirname(entry), { recursive: true });
 
 // Bundle our private workspace packages; leave published/npm-native libraries external.
-await build({
+const buildResult = await build({
   entryPoints: [join(root, "apps", "agent", "src", "main.ts")],
   outfile: entry,
   bundle: true,
   platform: "node",
   format: "esm",
   target: "node24",
+  metafile: true,
   banner: { js: "#!/usr/bin/env node" },
   external: [
     "@modelcontextprotocol/client",
@@ -29,6 +30,12 @@ await build({
     "zod",
   ],
 });
+// Keep build evidence outside the published package so release checks can prove
+// the upstream implementation was left external rather than copied into the CLI.
+await writeFile(
+  join(root, "dist", "agent-build-meta.json"),
+  JSON.stringify(buildResult.metafile, null, 2) + "\n",
+);
 await chmod(entry, 0o755);
 
 const manifest = {

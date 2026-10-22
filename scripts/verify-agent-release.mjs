@@ -30,6 +30,20 @@ for (const dep of Object.values({ ...pkg.dependencies, ...pkg.optionalDependenci
   requireCondition(typeof dep === "string" && !dep.startsWith("workspace:"),
     "unpublished workspace dependency found");
 }
+requireCondition(
+  pkg.dependencies?.["@wonderwhy-er/desktop-commander"] === "0.2.52",
+  "Desktop Commander must remain the original pinned npm dependency",
+);
+const buildMeta = JSON.parse(await readFile(
+  fileURLToPath(new URL("../dist/agent-build-meta.json", import.meta.url)), "utf8",
+));
+for (const input of Object.keys(buildMeta.inputs)) {
+  const normalized = input.replaceAll("\\", "/");
+  requireCondition(
+    !/node_modules\/(?:@wonderwhy-er\/desktop-commander|remote-desktop-commander)(?:\/|$)/.test(normalized),
+    "upstream implementation was bundled: " + normalized,
+  );
+}
 const entries = (await readdir(folder)).sort();
 requireCondition(JSON.stringify(entries) === JSON.stringify(["LICENSE", "dist", "package.json"]),
   "unexpected files in npm package: " + entries.join(", "));

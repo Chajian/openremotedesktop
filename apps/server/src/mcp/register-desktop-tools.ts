@@ -8,7 +8,7 @@ import {
 import {
   DESKTOP_COMMANDER_TOOL_MANIFEST,
   addDeviceIdToToolSchema,
-} from "@open-desktop-remote/desktop-commander-adapter";
+} from "@open-desktop-remote/tool-contracts";
 import type { DeviceRepository } from "../devices/device-repository.js";
 import type { ServerLogger } from "../logging.js";
 import type { ConnectionRegistry } from "../relay/connection-registry.js";

@@ -17,7 +17,7 @@ COPY apps ./apps
 COPY packages ./packages
 COPY scripts/install-windows.ps1 scripts/install-macos.sh ./scripts/
 
-RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @open-desktop-remote/server... install --prod --frozen-lockfile
 
 EXPOSE 3000
 VOLUME ["/data"]
