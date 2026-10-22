@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.2.0",
+    "@open-desktop-remote/tool-contracts": "workspace:*",
     "@wonderwhy-er/desktop-commander": "0.2.52"
   },
   "devDependencies": {

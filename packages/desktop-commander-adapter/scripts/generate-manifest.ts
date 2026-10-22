@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { DesktopCommanderClient } from "../src/desktop-commander-client.js";
 
 const outputPath = fileURLToPath(
-  new URL("../src/manifest.generated.json", import.meta.url),
+  new URL("../../tool-contracts/src/manifest.generated.json", import.meta.url),
 );
 
 const client = await DesktopCommanderClient.start();
