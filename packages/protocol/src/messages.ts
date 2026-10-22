@@ -111,6 +111,96 @@ const ServerNoticeSchema = z
   })
   .strict();
 
+const OperationTimestampSchema = z.number().int().nonnegative();
+
+const OperationPayloadSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("available"),
+      // A metadata-only query may omit an otherwise available response body.
+      response: z
+        .discriminatedUnion("type", [ToolResultSchema, ToolErrorSchema])
+        .optional(),
+    })
+    .strict(),
+  z.object({ status: z.enum(["expired", "evicted", "unavailable"]) }).strict(),
+]);
+
+export const OperationSnapshotSchema = z.discriminatedUnion("state", [
+  z.object({
+    state: z.literal("running"),
+    startedAt: OperationTimestampSchema,
+    cancelRequested: z.boolean(),
+  }).strict(),
+  z.object({
+    state: z.literal("completed"),
+    completedAt: OperationTimestampSchema,
+    cancelRequested: z.boolean(),
+    outcome: z.enum(["success", "error", "unknown"]),
+    payload: OperationPayloadSchema,
+  }).strict(),
+  z.object({ state: z.literal("not_found") }).strict(),
+  z.object({ state: z.literal("restarted") }).strict(),
+]);
+
+export const AgentRecoverySchema = z.object({
+  type: z.literal("agent.recovery"),
+  protocolVersion: ProtocolVersionSchema,
+  deviceId: DeviceIdSchema,
+  bootId: z.string().uuid(),
+}).strict();
+
+export const OperationCallSchema = z.object({
+  type: z.literal("operation.call"),
+  protocolVersion: ProtocolVersionSchema,
+  deviceId: DeviceIdSchema,
+  requestId: RequestIdSchema,
+  bootId: z.string().uuid(),
+  toolName: z.string().min(1),
+  arguments: z.record(z.string(), z.unknown()),
+  // Admission deadlines are checked against the Agent's clock, not while parsing.
+  expiresAt: OperationTimestampSchema,
+}).strict();
+
+export const OperationQuerySchema = z.object({
+  type: z.literal("operation.query"),
+  protocolVersion: ProtocolVersionSchema,
+  deviceId: DeviceIdSchema,
+  requestId: RequestIdSchema,
+  bootId: z.string().uuid(),
+  queryId: z.string().uuid(),
+  includeResult: z.boolean(),
+}).strict();
+
+export const OperationStatusSchema = z
+  .object({
+    type: z.literal("operation.status"),
+    protocolVersion: ProtocolVersionSchema,
+    deviceId: DeviceIdSchema,
+    requestId: RequestIdSchema,
+    bootId: z.string().uuid(),
+    queryId: z.string().uuid(),
+    snapshot: OperationSnapshotSchema,
+  })
+  .strict()
+  .superRefine((message, context) => {
+    if (
+      message.snapshot.state !== "completed" ||
+      message.snapshot.payload.status !== "available"
+    ) return;
+    const response = message.snapshot.payload.response;
+    if (!response) return;
+    for (const field of ["deviceId", "requestId"] as const) {
+      if (response[field] !== message[field]) {
+        context.addIssue({
+          code: "custom",
+          path: ["snapshot", "payload", "response", field],
+          message: `Response ${field} must match the operation status`,
+        });
+      }
+    }
+  });
+
 export const RelayMessageSchema = z.discriminatedUnion("type", [
   AgentHelloSchema,
   AgentReadySchema,
@@ -121,6 +211,10 @@ export const RelayMessageSchema = z.discriminatedUnion("type", [
   ToolErrorSchema,
   ToolCancelSchema,
   ServerNoticeSchema,
+  AgentRecoverySchema,
+  OperationCallSchema,
+  OperationQuerySchema,
+  OperationStatusSchema,
 ]);
 
 export type RelayMessage = z.infer<typeof RelayMessageSchema>;
@@ -128,6 +222,11 @@ export type AgentHelloMessage = z.infer<typeof AgentHelloSchema>;
 export type ToolCallMessage = z.infer<typeof ToolCallSchema>;
 export type ToolResultMessage = z.infer<typeof ToolResultSchema>;
 export type ToolErrorMessage = z.infer<typeof ToolErrorSchema>;
+export type OperationSnapshot = z.infer<typeof OperationSnapshotSchema>;
+export type AgentRecoveryMessage = z.infer<typeof AgentRecoverySchema>;
+export type OperationCallMessage = z.infer<typeof OperationCallSchema>;
+export type OperationQueryMessage = z.infer<typeof OperationQuerySchema>;
+export type OperationStatusMessage = z.infer<typeof OperationStatusSchema>;
 
 export function parseRelayMessage(input: unknown): RelayMessage {
   return RelayMessageSchema.parse(input);

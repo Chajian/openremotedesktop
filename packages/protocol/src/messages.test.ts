@@ -9,6 +9,29 @@ const deviceId = "6d1cf056-7fc5-49d4-8930-f989aafd957b";
 const requestId = "8a4e7a20-8cad-4211-a277-8e0f4438d581";
 
 describe("relay protocol schemas", () => {
+  it.each([
+    { type: "agent.hello", protocolVersion: 1, deviceId, agentVersion: "0.1.0", protocolRange: { min: 1, max: 1 }, platform: "linux", desktopCommanderVersion: "0.2.52", capabilities: ["desktop-commander"] },
+    { type: "agent.ready", protocolVersion: 1, deviceId, desktopCommanderVersion: "0.2.52", capabilities: [], toolsHash: "catalog-hash" },
+    { type: "agent.executor_status", protocolVersion: 1, deviceId, state: "READY" },
+    { type: "heartbeat", protocolVersion: 1, deviceId, timestamp: 0 },
+    { type: "tool.call", protocolVersion: 1, deviceId, requestId, toolName: "read_file", arguments: {} },
+    { type: "tool.result", protocolVersion: 1, deviceId, requestId, result: { isError: true, content: [] } },
+    { type: "tool.error", protocolVersion: 1, deviceId, requestId, error: { code: "EXECUTION_UNKNOWN", message: "Effect may have occurred" } },
+    { type: "tool.cancel", protocolVersion: 1, deviceId, requestId },
+    { type: "server.notice", protocolVersion: 1, level: "info", message: "Legacy notice" },
+  ])("keeps the v1 $type wire fixture unchanged", (fixture) => {
+    expect(parseRelayMessage(fixture)).toEqual(fixture);
+    expect(() => parseRelayMessage({ ...fixture, bootId: requestId })).toThrow();
+  });
+
+  it("keeps every existing v1 error code unchanged", () => {
+    expect(PROTOCOL_ERROR_CODES).toEqual([
+      "DEVICE_NOT_FOUND", "DEVICE_OFFLINE", "DEVICE_NOT_READY", "DEVICE_REVOKED",
+      "PROTOCOL_INCOMPATIBLE", "EXECUTOR_FAILED", "REQUEST_TIMEOUT", "REQUEST_CANCELLED",
+      "EXECUTION_UNKNOWN", "TOOL_NOT_SUPPORTED", "TOOL_EXECUTION_ERROR",
+    ]);
+  });
+
   it("parses a valid agent.hello message", () => {
     const message = parseRelayMessage({
       type: "agent.hello",
