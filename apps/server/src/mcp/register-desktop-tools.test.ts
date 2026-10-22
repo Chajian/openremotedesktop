@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
+import type { OperationQueryResult } from "../operations/operation-service.js";
 import type { Device } from "../devices/device-repository.js";
 import { buildMcpServer } from "./mcp-handler.js";
 
@@ -21,7 +22,7 @@ const device: Device = {
 const foreignDeviceId = "22222222-2222-4222-8222-222222222222";
 const foreignDevice: Device = { ...device, id: foreignDeviceId, name: "Foreign PC", ownerId: "foreign-test" };
 
-async function fixture(nestedError = false) {
+async function fixture(nestedError = false, operation?: OperationQueryResult) {
   const logs: Array<{ event: string; metadata: Record<string, unknown> }> = [];
   const calls: Array<{
     deviceId: string;
@@ -31,6 +32,13 @@ async function fixture(nestedError = false) {
   }> = [];
 
   const server = buildMcpServer({
+    ...(operation ? {
+      operationActor: () => ({ userId: "owner-test", clientId: "test-client", authorize: async () => true }),
+      operations: {
+        invoke: async () => { throw new Error("Query must not invoke an operation"); },
+        query: async () => operation,
+      },
+    } : {}),
     devices: {
       listOwnedDevices: (ownerId: string) => [device, foreignDevice].filter(d => d.ownerId === ownerId),
     },
@@ -185,4 +193,33 @@ it("logs a genuine nested tool error as unsuccessful while preserving its body",
  try { const result = await f.client.callTool({name:"get_config",arguments:{deviceId}});
  expect(result.isError).toBe(true); expect(f.logs[0]?.metadata.success).toBe(false);
  } finally { await f.close(); }
+});
+
+
+it("returns recovered payload only in structured content and useful metadata in text", async () => {
+  const operationId = randomUUID();
+  const marker = "retained-original-result-body";
+  const operation: OperationQueryResult = {
+    operationId, phase: "completed", outcome: "success",
+    resultAvailability: "available", cancelRequested: false,
+    snapshot: {
+      state: "completed", completedAt: 1, outcome: "success", cancelRequested: false,
+      payload: { status: "available", response: {
+        type: "tool.result", protocolVersion: 1, deviceId, requestId: operationId,
+        result: { content: [{ type: "text", text: marker }] },
+      } },
+    },
+  };
+  const f = await fixture(false, operation);
+  try {
+    const result = await f.client.callTool({ name: "odr_get_operation", arguments: { operationId } });
+    expect(result.structuredContent).toEqual({ operation });
+    expect(JSON.stringify(result.content)).not.toContain(marker);
+    expect(result.content).toEqual([{ type: "text", text: JSON.stringify({
+      operationId, phase: "completed", outcome: "success",
+      resultAvailability: "available", cancelRequested: false,
+    }) }]);
+  } finally {
+    await f.close();
+  }
 });

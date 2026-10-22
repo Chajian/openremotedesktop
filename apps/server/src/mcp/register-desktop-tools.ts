@@ -162,7 +162,18 @@ export function registerDesktopCommanderTools(
       const operation = deps.operations && actor
         ? await deps.operations.query(actor, operationId, includeResult ?? true)
         : {state: "not_found" as const};
-      return {content: [{type:"text", text:JSON.stringify(operation)}], structuredContent:{operation}};
+      const summary = "state" in operation ? { state: operation.state } : {
+        operationId: operation.operationId,
+        phase: operation.phase,
+        outcome: operation.outcome,
+        resultAvailability: operation.resultAvailability,
+        cancelRequested: operation.cancelRequested,
+        ...(operation.reason ? { reason: operation.reason } : {}),
+      };
+      return {
+        content: [{ type: "text", text: JSON.stringify(summary) }],
+        structuredContent: { operation },
+      };
     },
   );
 
