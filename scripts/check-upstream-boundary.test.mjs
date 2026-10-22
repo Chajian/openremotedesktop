@@ -193,3 +193,33 @@ for (const code of [
     rejects(check(dir), /deep.*import|implementation.*reference/i);
   });
 }
+
+for (const path of ["dist/package.json", "runtime/nested/package.json"]) {
+  test(`installed checker rejects added loader metadata ${path}`, (t) => {
+    const install = installed(t);
+    write(install.dir, path, JSON.stringify({ type: "commonjs" }));
+    rejects(checkInstall(install), /added.*package\.json/i);
+  });
+}
+const windowsImplementationPath = ["node_modules", "@wonderwhy-er", "desktop-commander", "dist", "index.js"].join("\\");
+for (const [form, literal] of [
+  ["escaped JS string", JSON.stringify(windowsImplementationPath)],
+  ["raw template string", `String.raw\`${windowsImplementationPath}\``],
+]) {
+  test(`rejects Windows deep implementation path in ${form}`, (t) => {
+    const dir = fixture(t);
+    write(dir, "scripts/windows-deep.mjs", `const entry = require(${literal});`);
+    rejects(check(dir), /deep.*import|implementation.*reference/i);
+  });
+  test(`rejects Windows upstream rewrite path in ${form}`, (t) => {
+    const dir = fixture(t);
+    write(dir, "scripts/windows-rewrite.mjs", `import { writeFileSync } from 'node:fs'; writeFileSync(${literal}, 'changed');`);
+    rejects(check(dir), /rewrite/i);
+  });
+}
+test("installed checker permits dependency manifests and ordinary runtime JSON", (t) => {
+  const install = installed(t);
+  write(install.dir, "node_modules/dependency/package.json", JSON.stringify({ type: "commonjs" }));
+  write(install.dir, "runtime/session.json", JSON.stringify({ state: "ready" }));
+  assert.equal(checkInstall(install).ok, true);
+});
