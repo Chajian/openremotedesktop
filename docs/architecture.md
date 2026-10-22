@@ -50,6 +50,7 @@ The Server owns control-plane and relay concerns:
 - live device connection registry and readiness;
 - validating MCP client approval, resource-bound access tokens and user ownership before routing calls to a target READY device;
 - request deadlines, cancellation and ambiguous-delivery reporting;
+- metadata-only operation records and authorized, read-only result recovery;
 - metadata-only logging by default.
 
 It does not implement Desktop Commander's file, process or document logic.
@@ -81,6 +82,7 @@ Durable state in SQLite includes:
 - per-user device registrations and revocation;
 - device refresh credential verifiers;
 - durable device metadata such as last seen and versions.
+- operation actor/client/device identity, process epoch, timestamps, terminal classification and a response digest for conflict detection; never arguments or result bodies.
 
 In-memory state includes:
 
@@ -88,6 +90,13 @@ In-memory state includes:
 - transient device state;
 - pending request promises and deadlines;
 - heartbeat timestamps.
+
+Agent memory separately owns bounded operation records and cached response bodies.
+The Server's `OperationService` handles authorization and evidence; its repository
+uses the existing SQLite database. `RequestBroker` handles temporary waiters and
+wire correlation. An `OperationAccessPolicy` interface currently has an owned-only
+implementation, leaving a narrow extension point for future sharing rules without
+adding sharing in this change.
 
 Desktop Commander process sessions stay in the Agent/child process, not the Server database.
 
@@ -109,7 +118,7 @@ Error/terminal states include `EXECUTOR_FAILED`, `INCOMPATIBLE` and `REVOKED`. O
 
 ## Tool exposure
 
-The Adapter ships a generated manifest from the pinned Desktop Commander version. The Server registers every manifest entry as a first-class MCP tool and adds one optional routing argument:
+The pure `packages/tool-contracts/` package ships a generated manifest from the pinned Desktop Commander version. It has no runtime executor dependency. The Server registers every manifest entry as a first-class MCP tool and adds one optional routing argument:
 
 ```json
 {
@@ -123,6 +132,13 @@ Control tools are implemented by Open Desktop Remote itself:
 
 - `list_devices`
 - `get_device_status`
+- `odr_get_operation`
+
+The runtime adapter remains on the Agent side and re-exports catalog helpers for
+source compatibility. The Server production dependency closure excludes both the
+adapter and Desktop Commander. Agent packaging leaves the original pinned npm
+package external; all tool execution continues through the existing local MCP
+stdio client. Neither upstream Desktop Commander project is modified or forked.
 
 ## Routing
 
@@ -148,6 +164,28 @@ Each remote call gets a UUID `requestId`.
 - If the same completed request ID reaches the Agent again, the Agent returns its cached result instead of executing again.
 
 This is deliberately conservative for shell and file mutations.
+
+Recovery-capable peers negotiate `operation-recovery-v1` per WebSocket connection.
+After an ambiguous call, the original OAuth client can query the returned
+operation ID. The Agent reads its existing record and optionally returns the
+original cached response. The query component receives only a read-store
+interface, with no executor or submission capability. Sending a query cannot
+create or repeat an operation.
+
+The guarantee depends on the Agent process surviving and its bounded result cache
+still retaining the body. Agent restart, expiry, eviction and unavailable results
+are explicit states. Server metadata survives Server restart but contains no
+payload backup. This is not durable job execution or a network exactly-once claim.
+Limits, negotiation and the MCP response contract are in [protocol](protocol.md).
+
+`pnpm upstream:check` verifies the fixed dependency identity, forbidden patch/deep
+implementation references, the unchanged launcher, and all 249 original published
+package files against a hash baseline derived from the integrity-verified npm
+tarball. CI repeats the installed-file check after tests and packaged smoke.
+Build metadata checks that the upstream implementation remains external. These
+checks provide reviewed boundary evidence; they are not a general sandbox for
+arbitrary dependency behavior. A future upstream upgrade must deliberately update
+the pin, generated contracts, compatibility evidence and reviewed hash baseline.
 
 ## Deployment and compatibility
 

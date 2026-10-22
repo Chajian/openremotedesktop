@@ -18,6 +18,13 @@ Normal logs must not include tool arguments, file content, screenshots, shell st
 
 Tool payload bodies and Desktop Commander results are not persisted to SQLite by default.
 
+Operation recovery adds SQLite metadata (user/client/device IDs, process epoch,
+tool name, timestamps, outcome and terminal response digest) with 24-hour retention.
+Arguments, human-readable error bodies and results remain excluded. The Agent
+keeps result bodies in bounded process memory for up to 15 minutes after completion;
+there is no durable result backup. Metadata-only queries omit the body and do not
+extend retention.
+
 ## Credentials and OAuth
 
 Owner passwords use a salted scrypt hash.
@@ -86,6 +93,23 @@ Revocation cannot undo actions already executed and cannot erase a copied creden
 A network loss can occur after a side-effecting command ran but before its result reached the Server. Open Desktop Remote reports this as `EXECUTION_UNKNOWN` and does not automatically repeat the call.
 
 Before retrying a mutation after this error, inspect the resulting state.
+
+When the error includes a recovery-capable operation ID, the original authorized
+MCP client can first call `odr_get_operation`. Its query component cannot submit or
+execute a tool. A result is available only while the Agent process and cached body
+survive. Missing, expired, evicted and restarted states never grant execution rights.
+
+Recovery requires the original requesting user and OAuth client, current device
+ownership and current token/grant authorization, including the original resource
+audience. Both invocation and query revalidate access after waiting before
+delivering a result. Unauthorized and nonexistent operations have the same query
+response. A different chat using the same authorized client/token is not a separate
+security principal; the existing bearer-token boundary still applies.
+
+Relay results are bound to the authenticated current socket and negotiated Agent
+process identity. Query replies additionally match a separate query ID. Conflicting
+terminal evidence is recorded and its payload withheld. Cancellation is a request,
+not proof of nonexecution or rollback.
 
 ## MCP client safety
 

@@ -119,12 +119,86 @@ A connection loss after a request is dispatched but before result confirmation p
 
 The Agent maintains a bounded completed-request cache. Receiving an already completed `requestId` returns the cached message without executing Desktop Commander again.
 
-The default serialized result limit is 8 MiB. Oversize results return a structured execution error rather than forwarding the full payload.
+## Negotiated operation recovery
+
+Recovery is an additive v1 capability. Existing message shapes remain unchanged.
+Each connection negotiates independently:
+
+1. Agent includes `operation-recovery-v1` in `agent.hello.capabilities`.
+2. Server sends the existing `server.notice` shape with code `OPERATION_RECOVERY_ENABLED`.
+3. Agent replies with `agent.recovery`, carrying `deviceId` and a UUID `bootId`.
+4. Server enables recovery only after that reply. Before agreement, or with an old peer, calls use the original `tool.call` shape.
+
+`bootId` identifies the Agent process and survives WebSocket reconnection. An Agent restart changes it. Replacing the local executor makes running operations unknown; already completed cached results remain readable.
+
+| Frame | Direction | Fields in addition to `protocolVersion` and `deviceId` |
+| --- | --- | --- |
+| `agent.recovery` | Agent → Server | `bootId` |
+| `operation.call` | Server → Agent | `requestId`, `bootId`, `toolName`, `arguments`, `expiresAt` |
+| `operation.query` | Server → Agent | `queryId`, `requestId`, expected `bootId`, `includeResult` |
+| `operation.status` | Agent → Server | `queryId`, `requestId`, responding `bootId`, `snapshot` |
+
+The stable operation ID is the existing `requestId`; queries have separate UUIDs.
+Completion still uses `tool.result` or `tool.error`. An embedded response in a
+status must match both the surrounding request and device IDs. Status replies
+are matched to the current authenticated socket and outstanding query; old
+sockets cannot complete a newer connection's request.
+
+Snapshots use `state: running | completed | not_found | restarted`.
+Running snapshots contain `startedAt` and `cancelRequested`. Completed snapshots
+contain `completedAt`, `cancelRequested`, an `outcome` of `success | error | unknown`,
+and a payload availability of `available | expired | evicted | unavailable`.
+An available payload contains the original response when `includeResult` is true;
+metadata-only queries omit that body. Unknown, missing or restarted observations
+never establish that an operation did not execute.
+
+Submission expiry is an admission deadline, not an execution timeout. Server
+sets it to now + 60 seconds; Agent rejects expired deadlines and deadlines more
+than five minutes ahead. Its admission clock cannot move backwards within the
+process. A canonical in-memory intent binds the ID to device, boot, tool,
+arguments and expiry; changed intent under the same ID is rejected. Server never
+resends a submission to recover a result.
+
+Agent defaults are 32 in-flight operations, 10,000 metadata records, 64 MiB cached
+response bodies, 8 MiB per serialized response, and 15 minutes of result retention
+after completion. Capacity pressure may evict bodies sooner, with explicit
+`evicted` availability. Metadata survives until both admission expiry and outcome
+retention have ended. Querying does not extend retention or execute a tool.
+
+The Server retains metadata for 24 hours and keeps at most 1,024 call waiters and
+64 recovery-query waiters. Queries time out after five seconds. A timeout or
+disconnect ends the original waiter but leaves the operation ID usable for a
+later query. Late valid terminal evidence is retained; contradictory terminal
+responses are marked as conflicts and their bodies are withheld.
+
+Cancellation records a request to stop, independently of actual completion.
+It does not erase a successful outcome or promise rollback. An executor exception,
+serialization failure or oversized response can leave execution unknown even if
+a local effect already occurred.
+
+## MCP recovery tool
+
+OpenRemote registers `odr_get_operation({ operationId, includeResult? })` separately
+from the upstream catalog. `includeResult` defaults to true. Original ambiguity
+and timeout responses include `structuredContent.error.details.operationId` and
+a `recovery` capability flag.
+
+The query returns `structuredContent.operation` with durable phase/outcome,
+`resultAvailability`, `cancelRequested`, and a snapshot when available. Availability
+also reports `offline`, `legacy`, `restarted`, `not_found`, `timeout`, `conflict`, or
+`running`. A query-capacity rejection is `unavailable` with `reason: capacity`.
+Missing and inaccessible operations both return `{ state: "not_found" }`.
+Access requires the original user and OAuth client, current device ownership,
+and current authorization. Authorization is checked again before result delivery.
+The MCP text content is a compact metadata summary; the cached response body is
+included only in `structuredContent.operation`, avoiding a second copy in text.
+
+The default serialized result limit is 8 MiB. Oversize results return a structured error rather than forwarding the full payload; recovery-capable operations preserve the fact that execution may already have occurred.
 
 ## Security properties
 
 - Relay access token must belong to the same `deviceId` carried in messages.
-- Agent-originated `tool.call`, `tool.cancel`, or `server.notice` are rejected as wrong-direction messages.
+- Agent-originated calls, queries, cancellation frames or Server notices are rejected as wrong-direction messages. Unnegotiated recovery frames are rejected.
 - Invalid JSON/schema messages close the relay connection.
 - Revoked devices cannot authenticate a new relay connection.
 - All payload transport is expected to be protected by HTTPS/WSS in production.
