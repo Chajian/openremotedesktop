@@ -40,6 +40,7 @@ describe("database migrations", () => {
         "oauth_clients",
         "oauth_codes",
         "oauth_tokens",
+        "operations",
         "owner",
         "owner_sessions",
         "schema_migrations",
@@ -69,6 +70,7 @@ describe("database migrations", () => {
         { version: 3 },
         { version: 4 },
         { version: 5 },
+        { version: 6 },
       ]);
     } finally {
       db.close();

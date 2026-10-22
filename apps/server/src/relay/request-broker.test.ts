@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ToolResultMessage } from "@open-desktop-remote/protocol";
 import type { WebSocket } from "ws";
 import { ConnectionRegistry } from "./connection-registry.js";
@@ -139,4 +139,42 @@ describe("RequestBroker", () => {
     broker.cancel(b!.requestId);
     await Promise.allSettled([first, second]);
   });
+});
+
+describe("recovery queries",()=>{
+ it("correlates every identity including current exact socket and strips unrequested results",async()=>{
+  const {registry,socket}=readyFixture(); const broker=new RequestBroker(registry); const bootId=randomUUID(); registry.get(deviceId)!.bootId=bootId;
+  const requestId=randomUUID(); const pending=broker.query(deviceId,requestId,bootId,false);
+  const query=JSON.parse(socket.sent[0]!); const status={...query,type:"operation.status",snapshot:{state:"completed",completedAt:1,cancelRequested:false,outcome:"success",payload:{status:"available",response:{type:"tool.result",protocolVersion:1,requestId,deviceId,result:{secret:true}}}}};
+  broker.handleStatus(status,new FakeSocket() as never);
+  broker.handleStatus({...status,queryId:randomUUID()},socket as never);
+  broker.handleStatus({...status,requestId:randomUUID()},socket as never);
+  broker.handleStatus({...status,bootId:randomUUID()},socket as never);
+  let settled=false; void pending.then(()=>{settled=true;}); await Promise.resolve(); expect(settled).toBe(false);
+  broker.handleStatus(status,socket as never); await expect(pending).resolves.toMatchObject({snapshot:{payload:{status:"available"}}});
+  expect((await pending).snapshot).not.toHaveProperty("payload.response");
+ });
+ it("bounds outstanding read-only queries at 64 and releases them on disconnect",async()=>{
+  const {registry,socket}=readyFixture(); const broker=new RequestBroker(registry); const bootId=randomUUID(); registry.get(deviceId)!.bootId=bootId;
+  const pending=Array.from({length:64},()=>broker.query(deviceId,randomUUID(),bootId,true));
+  await expect(broker.query(deviceId,randomUUID(),bootId,true)).rejects.toThrow("capacity"); expect(socket.sent).toHaveLength(64);
+  broker.handleDisconnect(deviceId,socket as never); const results=await Promise.allSettled(pending); expect(results.every(x=>x.status==="rejected")).toBe(true);
+ });
+});
+
+it("expires a query after five seconds without sending any execution or retry",async()=>{
+ vi.useFakeTimers();
+ try {
+ const {registry,socket}=readyFixture();const broker=new RequestBroker(registry);const bootId=randomUUID();registry.get(deviceId)!.bootId=bootId;
+ const pending=broker.query(deviceId,randomUUID(),bootId,true);const rejected=expect(pending).rejects.toMatchObject({code:"REQUEST_TIMEOUT"});
+ await vi.advanceTimersByTimeAsync(5000);await rejected;expect(socket.sent).toHaveLength(1);expect(JSON.parse(socket.sent[0]!).type).toBe("operation.query");
+ } finally {vi.useRealTimers();}
+});
+
+it("bounds call waiters independently of query capacity and releases a cancelled slot",async()=>{
+ const {registry,socket}=readyFixture();const broker=new RequestBroker(registry,{maxPendingCalls:1});
+ const first=broker.call(deviceId,"read_file",{},{timeoutMs:1000});
+ await expect(broker.call(deviceId,"read_file",{},{timeoutMs:1000})).rejects.toMatchObject({code:"REQUEST_TIMEOUT",details:{reason:"capacity"}});
+ expect(socket.sent).toHaveLength(1);broker.cancel(JSON.parse(socket.sent[0]!).requestId);await expect(first).rejects.toMatchObject({code:"REQUEST_CANCELLED"});
+ const second=broker.call(deviceId,"read_file",{},{timeoutMs:1000});broker.cancel(JSON.parse(socket.sent[2]!).requestId);await expect(second).rejects.toMatchObject({code:"REQUEST_CANCELLED"});
 });
