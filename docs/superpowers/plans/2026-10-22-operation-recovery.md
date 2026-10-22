@@ -104,6 +104,10 @@ deadline. No runtime implementation changed after the reviewed candidate.
 | Server production dependency closure | No adapter/upstream installed; operations schema initialized; health/readiness returned 200 |
 | Windows Agent | Agent-only frozen install, 96 tests in 12 files, typecheck, installer syntax and explicit module smoke passed |
 | Windows Agent tarball | Build, release inspection, isolated install, CLI and original stdio 26-tool discovery smoke passed; both installations matched all 249 upstream file hashes |
+| macOS arm64 Agent | Frozen install, 96 tests in 12 files, typecheck, installer syntax, explicit module smoke and all 249 upstream file hashes passed |
+| macOS arm64 recovery | Full frozen install and native SQLite build succeeded; five recovery/compatibility tests in two files passed, including the original stdio one-effect/exact-result scenario |
+| macOS Agent tarball | Build, release inspection, standalone install, CLI and original stdio 26-tool discovery passed; workspace and installed package each matched all 249 upstream file hashes |
+| macOS isolated installer | Actual `install-macos.sh --install-only` downloaded and checksum-verified Node 24.22.1, installed the candidate tarball, and passed CLI, original stdio 26-tool discovery and all 249 upstream file hashes |
 
 The unchanged launcher and generated tool catalog retain their original hashes.
 The new/new recovery scenario uses real local OAuth/MCP/WebSocket transport and
@@ -111,6 +115,14 @@ the original Desktop Commander stdio process. It confirms one file effect, one
 execution, exact result recovery, repeatable read-only queries and OAuth-client
 isolation. Compatibility tests cover all four capability combinations; old-peer
 cases use legacy fixtures, not installed historical release binaries.
+
+The macOS follow-up ran the unchanged `6d71433` candidate in an isolated checkout
+on macOS 15.3.1 arm64 with Node 24.21.0 and pnpm 10.12.3. The recovery E2E used a
+temporary loopback Server, isolated files and in-memory credentials; it reached
+READY through the actual source Agent classes without replacing the connected
+Agent or using its identity.
+The installer used a separate explicit installation directory and exited before
+CLI pairing. Its downloaded runtime passed the official archive checksum check.
 
 Environment and acceptance limits remain explicit:
 
@@ -120,13 +132,20 @@ Environment and acceptance limits remain explicit:
 - Docker was unavailable, so no Docker image build was performed. The clean
   production dependency closure and real application initialization were verified
   separately.
-- macOS installer shell syntax passed; actual macOS execution, installer upgrade,
-  new-version pairing/READY and production deployment were not performed.
+- Installed-CLI pairing with native credential storage, installer upgrade/rollback
+  and production deployment were not performed. The macOS source-Agent recovery
+  E2E establishes test-environment pairing/READY, not installed-CLI or production
+  acceptance. Intel macOS was not tested.
 - Dependency installation emitted existing upstream transitive deprecation
   warnings. The fixed upstream version was not replaced or patched to hide them.
-- Windows npm retained its existing install-script approval policy for Desktop
-  Commander, sharp and puppeteer. No scripts were approved or policy overridden.
-  CLI and stdio discovery passed under that policy; workflows depending on those
-  optional installation steps were not separately accepted.
+- Windows npm emitted an install-script approval warning for Desktop Commander,
+  sharp and puppeteer. No approvals or policy overrides were applied. CLI and
+  stdio discovery passed; lifecycle-script execution was not independently checked
+  on Windows, and optional dependency-specific workflows were not accepted.
+- Both macOS npm installations emitted the same approval warning. Their lifecycle
+  logs confirm that Desktop Commander, sharp and puppeteer scripts exited zero;
+  no approval or policy override was applied. The optional `fsevents@2.3.3` native
+  installation exited one, while both npm installs and all scoped package checks
+  exited zero. Optional dependency-specific workflows were not separately tested.
 - No publishing, production deployment, main-branch integration or replacement of
   a connected Agent was part of this implementation acceptance.
