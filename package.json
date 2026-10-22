@@ -14,6 +14,8 @@
     "security:scan": "node scripts/check-source-hygiene.mjs --all",
     "governance:check": "node --test scripts/check-agent-governance.test.mjs scripts/private-data-policy.test.mjs && node scripts/check-agent-governance.mjs",
     "privacy:check": "node scripts/check-privacy-additions.mjs --branch",
+    "upstream:check": "node scripts/check-upstream-boundary.mjs",
+    "upstream:test": "node --test scripts/check-upstream-boundary.test.mjs",
     "security:hooks": "git config --local core.hooksPath .githooks",
     "agent:package": "node scripts/build-agent-package.mjs"
   },

@@ -11,6 +11,8 @@ on:
       - 'scripts/verify-agent-release.mjs'
       - 'scripts/prepare-github-release.mjs'
       - 'scripts/smoke-packaged-agent.mjs'
+      - 'scripts/check-upstream-boundary*'
+      - 'scripts/upstream-desktop-commander-0.2.52.json'
       - 'pnpm-lock.yaml'
   workflow_dispatch:
     inputs:
@@ -56,6 +58,8 @@ jobs:
         run: node scripts/check-source-hygiene.mjs --all
       - name: Install Agent workspace
         run: pnpm --filter @open-desktop-remote/agent... install --frozen-lockfile
+      - name: Verify original upstream files
+        run: pnpm upstream:check
       - name: Agent tests and typecheck
         run: |
           pnpm --filter @open-desktop-remote/agent test:run
@@ -78,6 +82,8 @@ jobs:
           npm install --prefix dist/agent-install-check --no-audit --no-fund --no-package-lock "./dist/open-desktop-remote-agent-${version}.tgz"
           node dist/agent-install-check/node_modules/open-desktop-remote-agent/dist/cli.mjs --help
           node scripts/smoke-packaged-agent.mjs dist/agent-install-check
+          node scripts/check-upstream-boundary.mjs
+          node scripts/check-upstream-boundary.mjs --installed-package dist/agent-install-check/node_modules/@wonderwhy-er/desktop-commander
       - name: Validate GitHub Release assets and SHA256 checksums
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -141,6 +147,7 @@ jobs:
           pnpm test:e2e
           pnpm agent:package
           node scripts/verify-agent-release.mjs "$GITHUB_REF_NAME"
+          pnpm upstream:check
       - name: Check if npm version is already published
         id: npm-version
         working-directory: dist/agent-npm

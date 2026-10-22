@@ -37,10 +37,10 @@
 
 **Interfaces:** export OPERATION_RECOVERY_CAPABILITY, OPERATION_RECOVERY_NOTICE, OperationSnapshotSchema/OperationSnapshot, AgentRecoveryMessage, OperationCallMessage, OperationQueryMessage, OperationStatusMessage. Extend RelayMessage and parseRelayMessage without altering old shapes. Constants and exact wire fields are defined in the spec.
 
-- [ ] Write failing tests for all new frames, result ID mismatch, unknown/extra fields, invalid UUID/expiry, old v1 fixtures unchanged, and completed payload variants.
-- [ ] Run `pnpm --filter @open-desktop-remote/protocol test:run` and record the intended failure.
-- [ ] Implement strict schemas and exported types/constants, keeping existing errors compatible.
-- [ ] Run protocol tests and typecheck; review the contract before downstream integration.
+- [x] Write failing tests for all new frames, result ID mismatch, unknown/extra fields, invalid UUID/expiry, old v1 fixtures unchanged, and completed payload variants.
+- [x] Run `pnpm --filter @open-desktop-remote/protocol test:run` and record the intended failure.
+- [x] Implement strict schemas and exported types/constants, keeping existing errors compatible.
+- [x] Run protocol tests and typecheck; review the contract before downstream integration.
 
 ## Task 2: Agent operation records and query path
 
@@ -48,11 +48,11 @@
 
 **Interfaces:** consumes Task 1 wire types. Provide a read-only `OperationReadStore` and `OperationQuery` that return OperationSnapshot for requestId/expectedBootId/includeResult. Agent coordinator accepts OperationCallMessage and produces existing ToolResultMessage/ToolErrorMessage. Expose a stable process bootId and use the existing ExecutorClient/ExecutorManager callTool interface; no upstream imports.
 
-- [ ] Write red tests for exactly one effect across disconnect/query, canonical fingerprint conflict, boot mismatch, expired/future submission, backward clock, bounded in-flight/bytes/metadata, payload expiry/eviction with preserved metadata, and cancellation that preserves actual completion.
-- [ ] Implement in-memory operation records, deterministic cleanup/admission, and a read-only query object whose dependencies cannot execute.
-- [ ] Implement per-connection capability negotiation, agent.recovery announcement, operation.call/query direction checks, and result sending through the current session after saving the result.
-- [ ] Preserve old-peer tool.call semantics and contain failed sends; maintain results across same-process reconnection. Executor replacement invalidates running observations.
-- [ ] Run Agent tests/typecheck. Include old-Server/new-Agent fallback and reject unnegotiated recovery messages.
+- [x] Write red tests for exactly one effect across disconnect/query, canonical fingerprint conflict, boot mismatch, expired/future submission, backward clock, bounded in-flight/bytes/metadata, payload expiry/eviction with preserved metadata, and cancellation that preserves actual completion.
+- [x] Implement in-memory operation records, deterministic cleanup/admission, and a read-only query object whose dependencies cannot execute.
+- [x] Implement per-connection capability negotiation, agent.recovery announcement, operation.call/query direction checks, and result sending through the current session after saving the result.
+- [x] Preserve old-peer tool.call semantics and contain failed sends; maintain results across same-process reconnection. Executor replacement invalidates running observations.
+- [x] Run Agent tests/typecheck. Include old-Server/new-Agent fallback and reject unnegotiated recovery messages.
 
 ## Task 3: Server metadata, recovery transport and MCP control tool
 
@@ -60,12 +60,12 @@
 
 **Interfaces:** consumes Task 1 frames; preserve existing RequestBroker call(deviceId,toolName,args,{timeoutMs}) API for legacy call sites. Add a narrow recovery transport API for querying a requestId on a specified negotiated bootId, bound to exact socket and queryId. OperationService accepts actor context (userId/clientId plus current authorization), creates metadata before dispatch, and provides invoke/query. Query MCP tool is `odr_get_operation({operationId, includeResult?:boolean})`. Task 4 will switch Server catalog imports/dependency to `@open-desktop-remote/tool-contracts`; do not edit package manifests in this task.
 
-- [ ] Write red tests for metadata migration/reopen without payload bodies, waiter disconnect with queryable operationId, late result persistence, socket/query identity, terminal conflict, legacy fallback, current ownership and initiating-user/client isolation, revoked-during-wait delivery, offline/restarted/no-result query, and bounded queries.
-- [ ] Implement metadata-only repository migration and indexed retention, access policy, and operation service. Transactions end before network I/O.
-- [ ] Negotiate using v1 hello/server.notice/agent.recovery. Dispatch operation.call only once on negotiated peers; legacy peers receive unchanged tool.call. Validate active socket before updating metadata.
-- [ ] Register the read-only MCP query tool and put stable operationId in ambiguity/timeout error details. Preserve successful tool response shapes and distinguish nested tool isError from transport success.
-- [ ] Add request-correlated metadata logs and close-code diagnostics without raw reason/payload secrets.
-- [ ] Run Server tests/typecheck and relevant MCP/e2e tests; resolve failures introduced by the additional control tool/schema migration.
+- [x] Write red tests for metadata migration/reopen without payload bodies, waiter disconnect with queryable operationId, late result persistence, socket/query identity, terminal conflict, legacy fallback, current ownership and initiating-user/client isolation, revoked-during-wait delivery, offline/restarted/no-result query, and bounded queries.
+- [x] Implement metadata-only repository migration and indexed retention, access policy, and operation service. Transactions end before network I/O.
+- [x] Negotiate using v1 hello/server.notice/agent.recovery. Dispatch operation.call only once on negotiated peers; legacy peers receive unchanged tool.call. Validate active socket before updating metadata.
+- [x] Register the read-only MCP query tool and put stable operationId in ambiguity/timeout error details. Preserve successful tool response shapes and distinguish nested tool isError from transport success.
+- [x] Add request-correlated metadata logs and close-code diagnostics without raw reason/payload secrets.
+- [x] Run Server tests/typecheck and relevant MCP/e2e tests; resolve failures introduced by the additional control tool/schema migration.
 
 ## Task 4: Upstream isolation, end-to-end acceptance and handoff
 
@@ -73,9 +73,9 @@
 
 **Interfaces:** pure tool-contracts exports DESKTOP_COMMANDER_TOOL_MANIFEST, addDeviceIdToToolSchema and associated types, without runtime executor dependencies. Adapter public exports remain source-compatible. Upstream guard accepts a repository root and an optional installed-package path so it can verify real artifacts in source and packaged smoke jobs.
 
-- [ ] Write failing executable guard tests for changed upstream pin, patches/replacement sources, deep implementation imports, modified installed upstream files, and original package success.
-- [ ] Extract the pure catalog package without changing the original generated catalog content or desktop-commander-client.ts. Ensure Server dependency/install closure no longer needs the runtime adapter, update lockfile with pinned pnpm, and keep upstream external in Agent build.
-- [ ] Add real websocket recovery e2e with a controlled local executor effect, all four peer capability combinations, and a real original-Desktop-Commander stdio acceptance scenario in isolated temporary files.
+- [x] Write failing executable guard tests for changed upstream pin, patches/replacement sources, deep implementation imports, modified installed upstream files, and original package success.
+- [x] Extract the pure catalog package without changing the original generated catalog content or desktop-commander-client.ts. Ensure Server dependency/install closure no longer needs the runtime adapter, update lockfile with pinned pnpm, and keep upstream external in Agent build.
+- [x] Add real websocket recovery e2e with a controlled local executor effect, all four peer capability combinations, and a real original-Desktop-Commander stdio acceptance scenario in isolated temporary files.
 - [ ] Run repository test:run, typecheck, relevant e2e, governance/diff/privacy checks and original/package integrity checks; run Windows validation in the isolated user-device worktree with no replacement of its connected Agent.
 - [ ] Review the whole branch, resolve material findings, preserve the branch on the user's device, and report exact passing/failed/not-run gates. Keep deployment and publishing separate.
 

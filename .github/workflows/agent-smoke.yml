@@ -31,6 +31,8 @@ jobs:
           cache: pnpm
       - name: Install Agent workspace only
         run: pnpm --filter @open-desktop-remote/agent... install --frozen-lockfile
+      - name: Verify original upstream before smoke
+        run: pnpm upstream:check
       - name: Agent tests
         run: pnpm --filter @open-desktop-remote/agent test:run
       - name: Validate macOS installer syntax
@@ -48,6 +50,8 @@ jobs:
         run: node scripts/smoke-agent.mjs
       - name: Build npm package
         run: pnpm agent:package
+      - name: Verify external upstream in package build
+        run: node scripts/verify-agent-release.mjs
       - name: Create npm tarball
         run: npm pack ./dist/agent-npm --pack-destination dist
       - name: Install tarball without workspace
@@ -59,3 +63,7 @@ jobs:
         run: node dist/agent-install-check/node_modules/open-desktop-remote-agent/dist/cli.mjs --help
       - name: Check packaged Desktop Commander
         run: node scripts/smoke-packaged-agent.mjs dist/agent-install-check
+      - name: Recheck original upstream after smoke
+        run: |
+          node scripts/check-upstream-boundary.mjs
+          node scripts/check-upstream-boundary.mjs --installed-package dist/agent-install-check/node_modules/@wonderwhy-er/desktop-commander

@@ -7,6 +7,7 @@ import type { AddressInfo } from "node:net";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { buildApp } from "../../../apps/server/src/app.js";
 import { createDatabase } from "../../../apps/server/src/db/database.js";
+import { relayRegistryFor } from "../../../apps/server/src/relay/relay-route.js";
 
 const PKCE_VERIFIER =
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~".slice(
@@ -60,6 +61,12 @@ export async function startTestServer(
       publicBaseUrl: baseUrl,
       environment: "test",
     },
+  });
+  let relayApp: ReturnType<typeof buildApp> | undefined;
+  // The relay is registered inside an encapsulated Fastify plugin. Capture that
+  // instance so tests can wait for negotiation without arbitrary sleeps.
+  app.addHook("onRoute", function (route) {
+    if (route.url === "/relay") relayApp = this;
   });
   const serverErrors: Error[] = [];
   app.addHook("onError", async (_request, _reply, error) => {
@@ -221,6 +228,10 @@ export async function startTestServer(
 
   return {
     app,
+    get relayRegistry() {
+      if (!relayApp) throw new Error("Test Server relay route was not registered");
+      return relayRegistryFor(relayApp);
+    },
     db,
     dataDir,
     databasePath,

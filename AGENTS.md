@@ -14,7 +14,8 @@ These rules apply to the public **OpenRemoteDesktop** Git repository (`Chajian/o
 - `apps/server/`: self-hosted HTTP/OAuth and optional GitHub sign-in, legacy local Owner, per-user OAuth approvals/device authorization, relay routing, Dashboard and persistent SQLite state. Server-enforced ownership is mandatory; a GitHub login is not an MCP authorization grant.
 - `apps/agent/`: outbound-only WSS Agent, device pairing and protected credentials, process lifecycle, Desktop Commander stdio bridge, reconnect, deduplication and execution-state reporting.
 - `packages/protocol/` and `packages/shared/`: shared wire contracts and types; update both producer and consumer with compatibility tests for contract changes.
-- `packages/desktop-commander-adapter/`: pinned upstream Desktop Commander integration and generated tool contract. Do not fork or reimplement Desktop Commander core merely to add an OpenRemoteDesktop capability.
+- `packages/tool-contracts/`: pure generated Desktop Commander tool catalog and remote schema helpers; no executor or upstream runtime dependency.
+- `packages/desktop-commander-adapter/`: pinned upstream Desktop Commander stdio integration and source-compatible catalog re-exports. Do not fork or reimplement Desktop Commander core merely to add an OpenRemoteDesktop capability.
 - `scripts/`, `docker/`, `.github/workflows/`: installers, packaging, deployment and release automation. Avoid changing release and production defaults as a side effect of an unrelated feature.
 
 ## Invariants that must not regress
