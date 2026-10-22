@@ -21,9 +21,10 @@ Tool payload bodies and Desktop Commander results are not persisted to SQLite by
 Operation recovery adds SQLite metadata (user/client/device IDs, process epoch,
 tool name, timestamps, outcome and terminal response digest) with 24-hour retention.
 Arguments, human-readable error bodies and results remain excluded. The Agent
-keeps result bodies in bounded process memory for up to 15 minutes after completion;
-there is no durable result backup. Metadata-only queries omit the body and do not
-extend retention.
+keeps result bodies in bounded process memory with a 15-minute query expiry after
+completion. Expired entries are reclaimed lazily on store access; this is not a
+memory-zeroization deadline. There is no durable result backup. Metadata-only
+queries omit the body and do not extend retention.
 
 ## Credentials and OAuth
 

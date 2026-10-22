@@ -112,7 +112,7 @@ repeats the tool call. `includeResult: false` requests metadata only.
 
 Keep the Agent process alive while recovering. Its process identity and result
 cache survive relay reconnects; an Agent restart cannot recover old result bodies.
-Results are retained for up to 15 minutes after completion, within a 64 MiB total
+Results are queryable for up to 15 minutes after completion, within a 64 MiB total
 cache and 8 MiB per-response limit. Capacity pressure can evict a body earlier.
 The Server keeps metadata for 24 hours, so a known completion may remain visible
 after its body expires. Queries do not extend either retention period.

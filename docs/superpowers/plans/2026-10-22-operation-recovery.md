@@ -76,9 +76,57 @@
 - [x] Write failing executable guard tests for changed upstream pin, patches/replacement sources, deep implementation imports, modified installed upstream files, and original package success.
 - [x] Extract the pure catalog package without changing the original generated catalog content or desktop-commander-client.ts. Ensure Server dependency/install closure no longer needs the runtime adapter, update lockfile with pinned pnpm, and keep upstream external in Agent build.
 - [x] Add real websocket recovery e2e with a controlled local executor effect, all four peer capability combinations, and a real original-Desktop-Commander stdio acceptance scenario in isolated temporary files.
-- [ ] Run repository test:run, typecheck, relevant e2e, governance/diff/privacy checks and original/package integrity checks; run Windows validation in the isolated user-device worktree with no replacement of its connected Agent.
-- [ ] Review the whole branch, resolve material findings, preserve the branch on the user's device, and report exact passing/failed/not-run gates. Keep deployment and publishing separate.
+- [x] Run repository test:run, typecheck, relevant e2e, governance/diff/privacy checks and original/package integrity checks; run Windows validation in the isolated user-device worktree with no replacement of its connected Agent.
+- [x] Review the whole branch, resolve material findings, preserve the branch on the user's device, and report exact passing/failed/not-run gates. Keep deployment and publishing separate.
 
 ## Execution notes
 
 The user approved the design constraints and asked to continue. Use the existing authorization to implement and verify without extra stage-confirmation prompts. Task 1 is the shared contract gate. Tasks 2 and 3 have disjoint source ownership and may proceed concurrently after that contract is fixed, as required by the active parallel-delegation policy; stage/commit integration is serialized. Task 4 owns package/Docker/CI changes to avoid concurrent edits.
+
+## Verification record (2026-10-22)
+
+The integrated implementation at `d9fd2b5` passed independent whole-branch review.
+The only remaining review suggestion was then addressed by comparing the recovered
+body directly with a JSON snapshot of the original stdio result. That test-only
+follow-up passed all three operation-recovery acceptance tests. Documentation also
+clarifies that Agent expiry is enforced on store access and is not a memory-erasure
+deadline. No runtime implementation changed after the reviewed candidate.
+
+| Gate | Observed result |
+| --- | --- |
+| Linux full `pnpm test:run` | 472 tests passed in 57 files |
+| Linux full `pnpm typecheck` | All six workspace packages passed |
+| Linux full `pnpm test:e2e` | 13 tests passed in seven files |
+| Governance and documentation links | 14 tests and structure/link validation passed |
+| Upstream boundary regression suite | 54 tests passed |
+| Linux original-package checks after tests and packaged smoke | All 249 published file hashes matched in both installations |
+| Linux Agent tarball | Build, release inspection, isolated install, CLI and original stdio 26-tool discovery smoke passed |
+| Server production dependency closure | No adapter/upstream installed; operations schema initialized; health/readiness returned 200 |
+| Windows Agent | Agent-only frozen install, 96 tests in 12 files, typecheck, installer syntax and explicit module smoke passed |
+| Windows Agent tarball | Build, release inspection, isolated install, CLI and original stdio 26-tool discovery smoke passed; both installations matched all 249 upstream file hashes |
+
+The unchanged launcher and generated tool catalog retain their original hashes.
+The new/new recovery scenario uses real local OAuth/MCP/WebSocket transport and
+the original Desktop Commander stdio process. It confirms one file effect, one
+execution, exact result recovery, repeatable read-only queries and OAuth-client
+isolation. Compatibility tests cover all four capability combinations; old-peer
+cases use legacy fixtures, not installed historical release binaries.
+
+Environment and acceptance limits remain explicit:
+
+- Full Windows workspace installation could not build the Server's SQLite native
+  dependency because the C++ build toolchain is absent. The intended Windows
+  Agent-only matrix was used instead; Linux completed the full Server suite.
+- Docker was unavailable, so no Docker image build was performed. The clean
+  production dependency closure and real application initialization were verified
+  separately.
+- macOS installer shell syntax passed; actual macOS execution, installer upgrade,
+  new-version pairing/READY and production deployment were not performed.
+- Dependency installation emitted existing upstream transitive deprecation
+  warnings. The fixed upstream version was not replaced or patched to hide them.
+- Windows npm retained its existing install-script approval policy for Desktop
+  Commander, sharp and puppeteer. No scripts were approved or policy overridden.
+  CLI and stdio discovery passed under that policy; workflows depending on those
+  optional installation steps were not separately accepted.
+- No publishing, production deployment, main-branch integration or replacement of
+  a connected Agent was part of this implementation acceptance.
