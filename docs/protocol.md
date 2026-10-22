@@ -161,7 +161,9 @@ resends a submission to recover a result.
 
 Agent defaults are 32 in-flight operations, 10,000 metadata records, 64 MiB cached
 response bodies, 8 MiB per serialized response, and 15 minutes of result retention
-after completion. Capacity pressure may evict bodies sooner, with explicit
+after completion. Expiry is enforced during admission, completion and query;
+idle entries are reclaimed on the next such access. Capacity pressure may evict
+bodies sooner, with explicit
 `evicted` availability. Metadata survives until both admission expiry and outcome
 retention have ended. Querying does not extend retention or execute a tool.
 

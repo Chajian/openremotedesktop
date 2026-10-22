@@ -40,6 +40,7 @@ describe("operation recovery over real MCP and WebSocket transports", () => {
       const releaseResult = barrier();
       const returned = barrier();
       let executions = 0;
+      let originalResult: unknown;
       const startClient = async (): Promise<ExecutorClient> => {
         const client: ExecutorClient = originalUpstream
           ? await DesktopCommanderClient.start({ cwd: directory })
@@ -56,6 +57,7 @@ describe("operation recovery over real MCP and WebSocket transports", () => {
           callTool: async (name, args) => {
             executions += 1;
             const result = await client.callTool(name, args);
+            originalResult = JSON.parse(JSON.stringify(result));
             effect.release();
             await releaseResult.promise;
             returned.release();
@@ -120,6 +122,7 @@ describe("operation recovery over real MCP and WebSocket transports", () => {
       if (snapshot.state !== "completed" || snapshot.payload.status !== "available") throw new Error("missing saved result");
       expect(snapshot.payload.response).toMatchObject({ type: "tool.result", requestId: operationId });
       if (snapshot.payload.response?.type !== "tool.result") throw new Error("missing original response");
+      expect(snapshot.payload.response.result).toEqual(originalResult);
       if (!originalUpstream) {
         expect(snapshot.payload.response.result).toEqual({ content: [{ type: "text", text: "saved original result" }] });
       }
