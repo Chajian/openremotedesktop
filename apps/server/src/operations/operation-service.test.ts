@@ -270,3 +270,34 @@ it("does not misreport persistence errors during query as an offline device", as
   f.broker.handleStatus({ ...frame, type: "operation.status", snapshot: { state: "completed", completedAt: 1, cancelRequested: false, outcome: "success", payload: { status: "expired" } } }, f.socket as never);
   await failure;
 });
+
+it("reconciles a running query snapshot with completion during the final authorization await", async () => {
+  const f = fixture();
+  const { pending, call } = await dispatched(f);
+  await expect(pending).rejects.toMatchObject({ code: "REQUEST_TIMEOUT" });
+  let checks = 0;
+  let releaseAuthorization!: (value: boolean) => void;
+  const authorization = new Promise<boolean>((resolve) => { releaseAuthorization = resolve; });
+  const actor = {
+    ...f.actor,
+    authorize: async () => ++checks === 2 ? authorization : true,
+  };
+  const query = f.service.query(actor, call.requestId);
+  for (let i = 0; i < 10 && f.socket.sent.length < 2; i++) await Promise.resolve();
+  const frame = f.socket.sent[1]!;
+  f.broker.handleStatus({
+    ...frame,
+    type: "operation.status",
+    snapshot: { state: "running", startedAt: 1, cancelRequested: true },
+  }, f.socket as never);
+  for (let i = 0; i < 10 && checks < 2; i++) await Promise.resolve();
+  expect(checks).toBe(2);
+  f.broker.handleMessage(f.response(call.requestId), f.socket as never);
+  releaseAuthorization(true);
+  const result = await query;
+  expect(result).toMatchObject({
+    phase: "completed", outcome: "success", cancelRequested: true,
+    resultAvailability: "unavailable",
+  });
+  expect(result).not.toHaveProperty("snapshot");
+});

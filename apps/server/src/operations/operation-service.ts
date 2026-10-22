@@ -236,7 +236,10 @@ export class OperationService {
       availability = "conflict";
       snapshot = undefined;
     }
-    if (current.phase === "completed" && snapshot?.state === "running") snapshot = undefined;
+    if (current.phase === "completed" && snapshot?.state === "running") {
+      snapshot = undefined;
+      availability = "unavailable";
+    }
     return {
       operationId,
       phase: current.phase,
