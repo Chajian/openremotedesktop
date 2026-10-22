@@ -69,11 +69,11 @@ async function defaultSocketFactory(
     const socket = new WebSocket(url, {
       headers: { authorization: `Bearer ${accessToken}` },
     });
-    const onError = () => {
+    const onError = (error: Error) => {
       socket.off("open", onOpen);
-      // Errors emitted during the WebSocket handshake are transport failures.
-      // Synchronous construction/configuration errors still reject unchanged.
-      reject(new RelayTransportError());
+      // ws also emits permanent protocol/TLS validation errors here. Preserve
+      // the original error so only known network codes qualify for retry.
+      reject(error);
     };
     const onOpen = () => {
       socket.off("error", onError);

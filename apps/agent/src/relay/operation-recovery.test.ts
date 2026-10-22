@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { createServer } from "node:http";
 import { describe, expect, it, vi } from "vitest";
 import { OPERATION_RECOVERY_CAPABILITY, OPERATION_RECOVERY_NOTICE, type OperationCallMessage } from "@open-desktop-remote/protocol";
 import { ExecutorManager } from "../executor/executor-manager.js";
@@ -294,4 +295,55 @@ it.each([new ServerRequestError(408, null), new ServerRequestError(429, null), n
     }, sleep: async () => undefined });
   await relay.run(stop.signal);
   expect(connections).toBe(2); expect(h.executor.state()).toBe("READY");
+});
+
+it("keeps a malformed 101 handshake from the actual WebSocket factory terminal", async () => {
+  const h = await harness(); let attempts = 0;
+  const server = createServer();
+  server.on("upgrade", (_request, socket) => {
+    attempts++;
+    socket.end("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: invalid\r\n\r\n");
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "localhost", resolve);
+  });
+  try {
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Expected a TCP fixture");
+    const relay = new RelayClient({
+      credential: { ...credential, serverUrl: `http://localhost:${address.port}` },
+      executor: h.executor, heartbeatIntervalMs: 0,
+      refreshToken: async () => ({ accessToken: "test", expiresAt: 99_000, deviceId }),
+      sleep: async () => { throw new Error("unexpected retry"); },
+    });
+    await expect(relay.run(new AbortController().signal)).rejects.toThrow("Invalid Sec-WebSocket-Accept header");
+    expect(attempts).toBe(1);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+it("retries a network close during the actual WebSocket handshake", async () => {
+  const h = await harness(); const stop = new AbortController(); let attempts = 0; let retries = 0;
+  const server = createServer();
+  server.on("upgrade", (_request, socket) => { attempts++; socket.destroy(); });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "localhost", resolve);
+  });
+  try {
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Expected a TCP fixture");
+    const relay = new RelayClient({
+      credential: { ...credential, serverUrl: `http://localhost:${address.port}` },
+      executor: h.executor, heartbeatIntervalMs: 0,
+      refreshToken: async () => ({ accessToken: "test", expiresAt: 99_000, deviceId }),
+      sleep: async () => { retries++; stop.abort(); },
+    });
+    await relay.run(stop.signal);
+    expect(attempts).toBe(1); expect(retries).toBe(1); expect(h.executor.state()).toBe("READY");
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
 });
