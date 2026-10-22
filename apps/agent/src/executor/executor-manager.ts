@@ -17,6 +17,9 @@ export class ExecutorManager {
   private client: ExecutorClient | null = null;
   private startClient: () => Promise<ExecutorClient>;
   private readonly onState: (state: DeviceState) => void;
+  private epoch = 0;
+  private starting: { epoch: number; promise: Promise<void> } | undefined;
+  private readonly invalidationListeners = new Set<() => void>();
 
   constructor(options: ExecutorManagerOptions) {
     this.startClient = options.startClient;
@@ -31,44 +34,70 @@ export class ExecutorManager {
     this.startClient = factory;
   }
 
+  onInvalidated(listener: () => void): () => void {
+    this.invalidationListeners.add(listener);
+    return () => { this.invalidationListeners.delete(listener); };
+  }
+
   async start(): Promise<void> {
     if (this.currentState === "READY" && this.client) return;
+    if (this.starting?.epoch === this.epoch) return this.starting.promise;
+    const epoch = this.epoch;
+    const promise = this.initialize(epoch);
+    const starting = { epoch, promise };
+    this.starting = starting;
+    try {
+      await promise;
+    } finally {
+      if (this.starting === starting) this.starting = undefined;
+    }
+  }
 
+  private async initialize(epoch: number): Promise<void> {
     this.setState("EXECUTOR_STARTING");
     try {
       const client = await this.startClient();
-      const tools = await client.listTools();
-      if (tools.length === 0) {
+      if (epoch !== this.epoch) {
         await client.close().catch(() => undefined);
+        return;
+      }
+      const tools = await client.listTools();
+      if (epoch !== this.epoch || tools.length === 0) {
+        await client.close().catch(() => undefined);
+        if (epoch !== this.epoch) return;
         throw new Error("Desktop Commander exposed no tools");
       }
       this.client = client;
-      client.onClose?.(() => this.markCrashed());
+      client.onClose?.(() => {
+        if (this.client === client) this.markCrashed();
+      });
       this.setState("READY");
     } catch (error) {
-      this.client = null;
-      this.setState("EXECUTOR_FAILED");
+      if (epoch === this.epoch) {
+        this.client = null;
+        this.setState("EXECUTOR_FAILED");
+      }
       throw error;
     }
   }
 
   async restart(): Promise<void> {
-    if (this.client) {
-      await this.client.close().catch(() => undefined);
-      this.client = null;
-    }
-    await this.start();
+    const previous = this.client;
+    this.invalidateClient();
+    const epoch = this.epoch;
+    if (previous) await previous.close().catch(() => undefined);
+    if (epoch === this.epoch) await this.start();
   }
 
   markCrashed(): void {
-    this.client = null;
+    this.invalidateClient();
     if (this.currentState !== "INCOMPATIBLE") {
       this.setState("EXECUTOR_FAILED");
     }
   }
 
   markIncompatible(): void {
-    this.client = null;
+    this.invalidateClient();
     this.setState("INCOMPATIBLE");
   }
 
@@ -81,12 +110,18 @@ export class ExecutorManager {
 
   async close(): Promise<void> {
     const client = this.client;
-    this.client = null;
+    this.invalidateClient();
     if (client) await client.close();
     if (this.currentState !== "REVOKED") {
       this.currentState = "OFFLINE";
       this.onState("OFFLINE");
     }
+  }
+
+  private invalidateClient(): void {
+    this.epoch++;
+    this.client = null;
+    for (const listener of this.invalidationListeners) listener();
   }
 
   private setState(state: DeviceState): void {
