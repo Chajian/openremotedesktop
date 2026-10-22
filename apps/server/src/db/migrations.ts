@@ -109,4 +109,32 @@ export function runMigrations(db: BetterSqlite3.Database): void {
     })();
   }
 
+  if (!hasMigration(db, 6)) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE operations (
+          operation_id TEXT PRIMARY KEY,
+          requested_by_user_id TEXT NOT NULL,
+          originating_client_id TEXT NOT NULL,
+          device_id TEXT NOT NULL,
+          device_owner_id_at_creation TEXT NOT NULL,
+          tool_name TEXT NOT NULL,
+          boot_id TEXT,
+          phase TEXT NOT NULL CHECK (phase IN ('dispatched', 'unknown', 'completed')),
+          outcome TEXT CHECK (outcome IN ('success', 'error', 'unknown')),
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL,
+          retention_until INTEGER NOT NULL,
+          completed_at INTEGER,
+          terminal_digest TEXT,
+          conflict INTEGER NOT NULL DEFAULT 0,
+          cancel_requested INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX idx_operations_retention ON operations(retention_until);
+      `);
+      recordMigration(db, 6);
+    })();
+  }
+
 }

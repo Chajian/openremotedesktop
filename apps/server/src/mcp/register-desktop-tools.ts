@@ -9,6 +9,8 @@ import {
   DESKTOP_COMMANDER_TOOL_MANIFEST,
   addDeviceIdToToolSchema,
 } from "@open-desktop-remote/tool-contracts";
+import type { OperationService } from "../operations/operation-service.js";
+import type { OperationActor } from "../operations/access-policy.js";
 import type { DeviceRepository } from "../devices/device-repository.js";
 import type { ServerLogger } from "../logging.js";
 import type { ConnectionRegistry } from "../relay/connection-registry.js";
@@ -23,6 +25,8 @@ export type DesktopToolDependencies = {
   authOwnerId: (authInfo: AuthInfo | undefined) => string | null;
   registry: Pick<ConnectionRegistry, "snapshot">;
   broker: Pick<RequestBroker, "call">;
+  operations?: Pick<OperationService, "invoke" | "query">;
+  operationActor?: (authInfo: AuthInfo | undefined) => OperationActor | null;
   logger?: Pick<ServerLogger, "event">;
   toolTimeoutMs?: number;
 };
@@ -110,18 +114,19 @@ export function registerDesktopCommanderTools(
             deps.registry.snapshot(),
             deviceId,
           );
-          const relayResult = await deps.broker.call(
-            targetDeviceId,
-            tool.name,
-            forwarded,
-            { timeoutMs: deps.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS },
-          );
+          const actor = deps.operationActor?.(extra.http?.authInfo);
+          if (deps.operations && !actor) throw new Error("Missing authenticated account");
+          const relayResult = deps.operations && actor
+            ? await deps.operations.invoke(actor, targetDeviceId, tool.name, forwarded,
+                {timeoutMs: deps.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS})
+            : await deps.broker.call(targetDeviceId, tool.name, forwarded,
+                {timeoutMs: deps.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS});
           deps.logger?.event("tool.call", {
             requestId: relayResult.requestId,
             deviceId: targetDeviceId,
             toolName: tool.name,
             durationMs: Date.now() - startedAt,
-            success: true,
+            success: !(relayResult.result && typeof relayResult.result === "object" && "isError" in relayResult.result && relayResult.result.isError === true),
           });
           return relayResult.result as CallToolResult;
         } catch (error) {
@@ -131,12 +136,35 @@ export function registerDesktopCommanderTools(
             durationMs: Date.now() - startedAt,
             success: false,
             errorCode: errorCode(error),
+            ...(error instanceof RelayRequestError && error.details && typeof error.details === "object" && "operationId" in error.details
+              ? {operationId: error.details.operationId} : {}),
           });
           return errorResult(error);
         }
       },
     );
   }
+
+  server.registerTool(
+    "odr_get_operation",
+    {
+      description: "Read an existing operation's execution evidence and retained result. This never re-executes the tool. Results depend on Agent process survival and cache availability.",
+      inputSchema: fromJsonSchema<{operationId: string; includeResult?: boolean}>({
+        type: "object", properties: {
+          operationId: {type: "string", format: "uuid"},
+          includeResult: {type: "boolean", default: true},
+        }, required: ["operationId"], additionalProperties: false,
+      }),
+      annotations: {readOnlyHint: true, idempotentHint: true},
+    },
+    async ({operationId, includeResult}, extra) => {
+      const actor = deps.operationActor?.(extra.http?.authInfo);
+      const operation = deps.operations && actor
+        ? await deps.operations.query(actor, operationId, includeResult ?? true)
+        : {state: "not_found" as const};
+      return {content: [{type:"text", text:JSON.stringify(operation)}], structuredContent:{operation}};
+    },
+  );
 
   server.registerTool(
     "list_devices",

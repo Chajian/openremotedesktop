@@ -24,6 +24,10 @@ import { registerDevicePairingRoutes } from "./routes/device-pairing.js";
 import { registerDeviceRoutes } from "./routes/devices.js";
 import { registerLoginRoutes } from "./routes/login.js";
 import { registerMcpRoutes } from "./mcp/mcp-handler.js";
+import { OperationRepository } from "./operations/operation-repository.js";
+import { OperationService } from "./operations/operation-service.js";
+import { OwnedOperationAccessPolicy } from "./operations/access-policy.js";
+import { createOperationActor } from "./mcp/operation-actor.js";
 import { createServerLogger } from "./logging.js";
 
 export type AppDependencies = {
@@ -70,6 +74,12 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
   const registry = new ConnectionRegistry();
   const broker = new RequestBroker(registry);
   const logger = createServerLogger();
+  const operationRepository = new OperationRepository(deps.db);
+  const operations = new OperationService(operationRepository, broker, new OwnedOperationAccessPolicy(devices), {logger});
+  operationRepository.cleanup();
+  const operationCleanup = setInterval(() => operationRepository.cleanup(), 60_000);
+  operationCleanup.unref();
+  app.addHook("onClose", async () => clearInterval(operationCleanup));
 
   registerBootstrapRoutes(app, owners);
   registerLoginRoutes(app, owners, sessions, deps.config);
@@ -80,13 +90,15 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
   registerDeviceRoutes(app, devices, deviceAuth, sessions);
   void app.register(async (relayApp) => {
     await relayApp.register(websocket);
-    registerRelayRoute(relayApp, deviceAuth, devices, registry, broker);
+    registerRelayRoute(relayApp, deviceAuth, devices, registry, broker, logger);
   });
   registerMcpRoutes(app, oauth, deps.config, {
     devices,
     registry,
     broker,
     logger,
+    operations,
+    operationActor: (info) => createOperationActor(oauth, info),
     authOwnerId: (info) => {
       const ownerId = info?.extra?.ownerId;
       return typeof ownerId === "string" ? ownerId : null;

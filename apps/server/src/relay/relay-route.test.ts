@@ -242,3 +242,28 @@ describe("relay request broker integration", () => {
     });
   });
 });
+
+describe("operation recovery negotiation", () => {
+  it("offers recovery only for capable hello and enables it only after boot acknowledgement", () => {
+    const { registry, devices, device } = fixture();
+    const socket = new FakeSocket();
+    registry.attach(device.id, socket as never);
+    registry.markAuthenticated(device.id, socket as never);
+    const receive = (message: object) => handleRelayPayload(registry, devices, device.id, socket as never, JSON.stringify({ protocolVersion: 1, deviceId: device.id, ...message }));
+    expect(() => receive({type: "agent.recovery", bootId: "6d1cf056-7fc5-49d4-8930-f989aafd957b"})).toThrow();
+    receive({ type: "agent.hello", agentVersion: "1", protocolRange: {min:1,max:1}, platform:"linux", desktopCommanderVersion:"0.2.52", capabilities:["operation-recovery-v1"] });
+    expect(socket.sent.map((raw) => JSON.parse(raw))).toContainEqual(expect.objectContaining({type:"server.notice", code:"OPERATION_RECOVERY_ENABLED"}));
+    expect(registry.get(device.id)).not.toHaveProperty("bootId");
+    receive({type:"agent.recovery", bootId:"6d1cf056-7fc5-49d4-8930-f989aafd957b"});
+    expect(registry.get(device.id)).toHaveProperty("bootId", "6d1cf056-7fc5-49d4-8930-f989aafd957b");
+  });
+  it("rejects result and hello from replaced sockets before updating state", () => {
+    const { registry, devices, device } = fixture();
+    const old = new FakeSocket(); const current = new FakeSocket();
+    registry.attach(device.id, old as never); registry.markAuthenticated(device.id, old as never);
+    registry.attach(device.id, current as never); registry.markAuthenticated(device.id, current as never);
+    const handled: unknown[] = [];
+    expect(() => handleRelayPayload(registry, devices, device.id, old as never, JSON.stringify({type:"tool.result",protocolVersion:1,deviceId:device.id,requestId:"6d1cf056-7fc5-49d4-8930-f989aafd957b",result:{}}), {handleMessage: (m: unknown) => handled.push(m)})).toThrow();
+    expect(handled).toEqual([]);
+  });
+});

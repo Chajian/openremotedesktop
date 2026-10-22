@@ -9,6 +9,8 @@ import { HEARTBEAT_STALE_MS } from "./heartbeat.js";
 export type LiveDeviceConnection = {
   deviceId: string;
   state: DeviceState;
+  recoveryOffered?: boolean;
+  bootId?: string;
   connectedAt: number;
   lastHeartbeatAt: number;
   socket: WebSocket;

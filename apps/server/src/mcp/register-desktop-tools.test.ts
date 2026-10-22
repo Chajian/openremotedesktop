@@ -21,7 +21,7 @@ const device: Device = {
 const foreignDeviceId = "22222222-2222-4222-8222-222222222222";
 const foreignDevice: Device = { ...device, id: foreignDeviceId, name: "Foreign PC", ownerId: "foreign-test" };
 
-async function fixture() {
+async function fixture(nestedError = false) {
   const logs: Array<{ event: string; metadata: Record<string, unknown> }> = [];
   const calls: Array<{
     deviceId: string;
@@ -57,6 +57,7 @@ async function fixture() {
           requestId: randomUUID(),
           deviceId: target,
           result: {
+            ...(nestedError ? { isError: true } : {}),
             content: [{ type: "text" as const, text: "ok" }],
           },
         };
@@ -90,7 +91,7 @@ describe("Desktop Commander MCP registration", () => {
       expect(readFile?.inputSchema.properties).toHaveProperty("deviceId");
       expect(readFile?.inputSchema.required ?? []).not.toContain("deviceId");
       expect(tools.map((tool) => tool.name)).toEqual(
-        expect.arrayContaining(["list_devices", "get_device_status"]),
+        expect.arrayContaining(["list_devices", "get_device_status", "odr_get_operation"]),
       );
     } finally {
       await f.close();
@@ -177,4 +178,11 @@ describe("Desktop Commander MCP registration", () => {
       await f.close();
     }
   });
+});
+
+it("logs a genuine nested tool error as unsuccessful while preserving its body", async () => {
+ const f = await fixture(true);
+ try { const result = await f.client.callTool({name:"get_config",arguments:{deviceId}});
+ expect(result.isError).toBe(true); expect(f.logs[0]?.metadata.success).toBe(false);
+ } finally { await f.close(); }
 });

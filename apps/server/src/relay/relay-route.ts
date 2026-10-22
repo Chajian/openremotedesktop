@@ -1,5 +1,7 @@
 import {
   parseRelayMessage,
+  OPERATION_RECOVERY_CAPABILITY,
+  OPERATION_RECOVERY_NOTICE,
   type RelayMessage,
 } from "@open-desktop-remote/protocol";
 import type { FastifyInstance } from "fastify";
@@ -9,6 +11,7 @@ import {
   type DeviceAuthService,
   type DevicePrincipal,
 } from "../devices/device-auth.js";
+import type { ServerLogger } from "../logging.js";
 import type { DeviceRepository } from "../devices/device-repository.js";
 import { ConnectionRegistry } from "./connection-registry.js";
 import { HEARTBEAT_INTERVAL_MS } from "./heartbeat.js";
@@ -82,19 +85,35 @@ export function handleRelayPayload(
   deviceId: string,
   socket: WebSocket,
   raw: string,
-  broker?: Pick<RequestBroker, "handleMessage">,
+  broker?: Pick<RequestBroker, "handleMessage"> & Partial<Pick<RequestBroker, "handleStatus">>,
 ): RelayMessage {
+  const connection = registry.get(deviceId);
+  if (!connection || connection.socket !== socket || connection.state === "CONNECTED") {
+    throw new RelayProtocolError("Socket is not the authenticated current connection");
+  }
+  const device = devices.findById(deviceId);
+  if (!device || device.revokedAt !== null) throw new RelayProtocolError("Device is not authorized");
   const message = parseRelayMessage(JSON.parse(raw));
   assertMessageDevice(message, deviceId);
 
   switch (message.type) {
     case "agent.hello":
+      if (message.capabilities.includes(OPERATION_RECOVERY_CAPABILITY) && !connection.recoveryOffered) {
+        connection.recoveryOffered = true;
+        connection.send({ type: "server.notice", protocolVersion: 1, deviceId, level: "info", code: OPERATION_RECOVERY_NOTICE, message: "Operation recovery supported" });
+      }
       devices.updateRuntimeMetadata(deviceId, {
         platform: message.platform,
         agentVersion: message.agentVersion,
         desktopCommanderVersion: message.desktopCommanderVersion,
       });
       registry.heartbeat(deviceId, socket);
+      break;
+    case "agent.recovery":
+      if (!connection.recoveryOffered || (connection.bootId && connection.bootId !== message.bootId)) {
+        throw new RelayProtocolError("Recovery was not offered or process identity changed");
+      }
+      connection.bootId = message.bootId;
       break;
     case "agent.executor_status":
       registry.markExecutorState(deviceId, socket, message.state);
@@ -113,8 +132,14 @@ export function handleRelayPayload(
       break;
     case "tool.result":
     case "tool.error":
-      broker?.handleMessage(message);
+      broker?.handleMessage(message, socket);
       break;
+    case "operation.status":
+      if (!connection.bootId) throw new RelayProtocolError("Recovery is not negotiated");
+      broker?.handleStatus?.(message, socket);
+      break;
+    case "operation.call":
+    case "operation.query":
     case "tool.call":
     case "tool.cancel":
     case "server.notice":
@@ -132,6 +157,7 @@ export function registerRelayRoute(
   devices: DeviceRepository,
   registry = new ConnectionRegistry(),
   broker = new RequestBroker(registry),
+  logger?: Pick<ServerLogger, "event">,
 ): void {
   registries.set(app, registry);
   brokers.set(app, broker);
@@ -178,7 +204,8 @@ export function registerRelayRoute(
       }
     });
 
-    socket.on("close", () => {
+    socket.on("close", (code) => {
+      logger?.event("relay.close", {deviceId, code, current: registry.get(deviceId)?.socket === socket});
       broker.handleDisconnect(deviceId, socket as WebSocket);
       registry.detach(deviceId, socket as WebSocket);
     });
