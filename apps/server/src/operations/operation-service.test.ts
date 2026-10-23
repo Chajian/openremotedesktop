@@ -325,4 +325,16 @@ describe("review follow-up: safe dispatch and persistence failures", () => {
     expect(() => f.broker.handleMessage(f.response(call.requestId), f.socket as never)).not.toThrow();
     await expect(pending).resolves.toEqual(f.response(call.requestId));
   });
+
+  it("removes legacy correlation metadata for 1,000 rejected, never-dispatched calls", async () => {
+    const f = fixture(false, undefined, 0);
+    for (let i = 0; i < 1_000; i++) {
+      await expect(f.service.invoke(f.actor, f.device.id, "write_file", {}, { timeoutMs: 20 }))
+        .rejects.toMatchObject({ code: "REQUEST_TIMEOUT", details: { dispatched: false } });
+    }
+    const correlations = Reflect.get(f.service, "legacySockets") as WeakMap<object, Map<string, number>>;
+    expect(correlations.get(f.socket)?.size ?? 0).toBe(0);
+    expect(f.socket.sent).toHaveLength(0);
+    expect(f.db.prepare("SELECT COUNT(*) AS count FROM operations").get()).toMatchObject({ count: 0 });
+  });
 });
