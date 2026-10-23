@@ -13,9 +13,16 @@ describe("Desktop Commander stdio compatibility", () => {
 
         // Upstream start_process descriptions include OS and configured shell.
         // Compare every executable schema, plus all platform-neutral descriptions.
+        // Ignore only upstream's WSL/container mount-path supplement.
+        // Tool names, schemas and all other descriptions remain strict.
+        const stableDescription = (description: string | undefined) =>
+          (description ?? "").replace(
+            /\n\n🐳 CONTAINER: Prefer paths within mounted directories: [^\n]*\nWhen users ask about file locations, check these mounted paths first\. /g,
+            "",
+          );
         const contract = (tool: (typeof tools)[number]) => ({
           name: tool.name,
-          description: tool.name === "start_process" ? undefined : tool.description ?? "",
+          description: tool.name === "start_process" ? undefined : stableDescription(tool.description),
           inputSchema: tool.inputSchema,
         });
         expect(tools.map(contract).sort((a, b) => a.name.localeCompare(b.name)))
