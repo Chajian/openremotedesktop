@@ -2,7 +2,7 @@ import type { DeviceState } from "@open-desktop-remote/shared";
 
 export interface ExecutorClient {
   listTools(): Promise<Array<{ name: string }>>;
-  callTool(name: string, args: unknown): Promise<unknown>;
+  callTool(name: string, args: unknown, options?: { timeoutMs: number }): Promise<unknown>;
   close(): Promise<void>;
   onClose?(handler: () => void): void;
 }
@@ -146,11 +146,11 @@ export class ExecutorManager {
     this.setState("INCOMPATIBLE");
   }
 
-  async callTool(name: string, args: unknown): Promise<unknown> {
+  async callTool(name: string, args: unknown, options?: { timeoutMs: number }): Promise<unknown> {
     if (this.currentState !== "READY" || !this.client) {
       throw new Error("Desktop Commander executor is not READY");
     }
-    return this.client.callTool(name, args);
+    return this.client.callTool(name, args, options);
   }
 
   async close(): Promise<void> {

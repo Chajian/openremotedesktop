@@ -184,6 +184,15 @@ After dispatch, a waiter timeout retains `details.operationId` for read-only
 recovery. A shorter Server waiter does **not** cancel or retry the local effect.
 The Agent's default 10-minute stalled-executor watchdog is separate from both
 this waiter and the 60-second **submission admission** expiry described above.
+The Agent also overrides the **local Desktop Commander MCP SDK** request timeout
+for negotiated recovery operations to **watchdog + 30 seconds** (default 630 s),
+including its maximum total timeout. Thus the SDK's unrelated default 60 s
+timeout cannot clear the 10-minute watchdog while a local stdio connection
+remains open but the tool fails to respond. A watchdog recycle marks the original
+operation unknown, never resends it, and only starts a new executor after
+the old process has been safely closed. Ordinary tool-level `isError` responses
+are completed operations, not a watchdog restart signal. Legacy tool calls
+outside negotiated recovery keep their previous local SDK timeout behavior.
 Other clients and reverse proxies with shorter request timeouts may still need
 their own configuration.
 

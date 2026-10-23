@@ -64,6 +64,17 @@ operator must resolve the failure rather than launch another local executor.
 Ordinary network-only reconnects do not recycle the executor.
 The hard deadline can be adjusted in `RelayClientOptions.stalledOperationTimeoutMs`.
 
+For negotiated `operation.call` execution, the Agent passes an explicit timeout
+to the local Desktop Commander MCP SDK: **watchdog deadline + 30 seconds**
+(default **10 minutes 30 seconds**). Both the SDK request timeout and its
+maximum total timeout use that value. This prevents the SDK's usual 60-second
+request timeout from marking a hung, still-connected execution as complete
+before the 10-minute recovery watchdog can run. The watchdog remains the
+authority for recycling a stalled executor; the operation stays
+`EXECUTION_UNKNOWN` and is never replayed. An ordinary tool `isError` result
+is a completed business failure, not an executor failure. Legacy calls that do
+not negotiate operation recovery still use their existing SDK timeout behavior.
+
 Retryable network/handshake and token-refresh transport failures also use this
 backoff. Rejected credentials and incompatible protocol remain terminal. Reconnect
 does not resend a previously dispatched tool call.

@@ -203,6 +203,10 @@ export class OperationStore implements OperationReadStore {
   }
 }
 
+const DEFAULT_EXECUTOR_WATCHDOG_MS = 10 * 60_000;
+// The SDK is a fallback after the recovery watchdog, never its early replacement.
+const LOCAL_SDK_TIMEOUT_GRACE_MS = 30_000;
+
 export class OperationCoordinator {
   private readonly active = new Map<string, {
     promise: Promise<OperationResponse>;
@@ -212,7 +216,9 @@ export class OperationCoordinator {
   private recoveringStalledExecutor = false;
 
   constructor(
-    private readonly executor: { callTool(name: string, args: unknown): Promise<unknown> },
+    private readonly executor: {
+      callTool(name: string, args: unknown, options?: { timeoutMs: number }): Promise<unknown>;
+    },
     readonly store: OperationStore,
     private readonly options: { maxExecutionMs?: number; recoverExecutor?: () => Promise<void> } = {},
   ) {}
@@ -227,7 +233,7 @@ export class OperationCoordinator {
         // Recovery itself failed: do not preserve a phantom running slot.
         this.invalidateRunning();
       }).finally(() => { this.recoveringStalledExecutor = false; });
-    }, this.options.maxExecutionMs ?? 10 * 60_000);
+    }, this.options.maxExecutionMs ?? DEFAULT_EXECUTOR_WATCHDOG_MS);
     timer.unref();
     this.watchdogs.set(requestId, timer);
   }
@@ -252,7 +258,11 @@ export class OperationCoordinator {
       let response: OperationResponse;
       let outcome: Outcome;
       try {
-        const raw = await this.executor.callTool(call.toolName, call.arguments);
+        const raw = await this.executor.callTool(call.toolName, call.arguments,
+          this.options.recoverExecutor ? {
+            timeoutMs: (this.options.maxExecutionMs ?? DEFAULT_EXECUTOR_WATCHDOG_MS) +
+              LOCAL_SDK_TIMEOUT_GRACE_MS,
+          } : undefined);
         response = { type: "tool.result", protocolVersion: 1, requestId: call.requestId,
           deviceId: call.deviceId, result: raw === undefined ? null : raw };
         outcome = raw !== null && typeof raw === "object" && "isError" in raw && raw.isError === true ? "error" : "success";
