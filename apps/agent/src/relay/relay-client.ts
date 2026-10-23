@@ -216,12 +216,14 @@ export class RelayClient {
 
   private async recoverStalledExecutor(): Promise<void> {
     const original = this.session;
+    let lastReportedState: "EXECUTOR_FAILED" | "EXECUTOR_STARTING" | undefined;
     const status = (state: "EXECUTOR_FAILED" | "EXECUTOR_STARTING") => {
-      if (original && this.session === original) {
-        send(original.socket, {
+      if (original && this.session === original && lastReportedState !== state) {
+        const delivered = send(original.socket, {
           type: "agent.executor_status", protocolVersion: PROTOCOL_VERSION,
           deviceId: this.options.credential.deviceId, state,
         });
+        if (delivered) lastReportedState = state;
       }
     };
     // The actual local state change occurs only after the old executor closed.

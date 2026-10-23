@@ -410,8 +410,8 @@ it("keeps Relay non-ready when a stalled executor cannot confirm shutdown", asyn
   expect(calls).toBe(1);
   expect(socket.sent.filter(m => m.type === "agent.ready")).toHaveLength(1);
   const states = socket.sent.filter(m => m.type === "agent.executor_status").map(m => m.state);
-  expect(states).toContain("EXECUTOR_FAILED");
-  expect(states).not.toContain("EXECUTOR_STARTING");
+  expect(states).toEqual(["EXECUTOR_FAILED"]);
+  expect(socket.readyState).toBe(1);
   socket.close(); await pending;
 });
 

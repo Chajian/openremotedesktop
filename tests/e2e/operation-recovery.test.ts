@@ -197,6 +197,38 @@ describe("operation recovery over real MCP and WebSocket transports", () => {
     expect(agent.failure).toBeUndefined();
   });
 
+  it("keeps the Relay connected when a stalled executor shutdown fails", async () => {
+    const server = await startTestServer();
+    cleanups.push(() => server.close());
+    const cookie = await server.bootstrapAndLogin();
+    const token = await server.issueMcpAccessToken(cookie);
+    const credential = await server.pairDevice(cookie, "Shutdown Failure Test");
+    let starts = 0;
+    let executed = 0;
+    const agent = startRecoveryAgent(credential, async () => {
+      starts++;
+      return {
+        listTools: async () => [{ name: "read_file" }],
+        callTool: async () => { executed++; return new Promise(() => undefined); },
+        close: async () => { throw new Error("simulated close failure"); },
+      };
+    }, { stalledOperationTimeoutMs: 40 });
+    cleanups.push(() => agent.stop());
+    const client = await connectMcpClient(server.baseUrl, token);
+    cleanups.push(() => client.close());
+    await waitFor(() => server.relayRegistry.get(credential.deviceId)?.state === "READY");
+    await waitFor(() => Boolean(server.relayRegistry.get(credential.deviceId)?.bootId));
+    const original = client.callTool({ name: "read_file",
+      arguments: { deviceId: credential.deviceId, path: "/not-used" } });
+    await waitFor(() => server.relayRegistry.get(credential.deviceId)?.state === "EXECUTOR_FAILED");
+    expect((await original).structuredContent?.error).toMatchObject({ code: "EXECUTION_UNKNOWN" });
+    await new Promise(resolve => setTimeout(resolve, 120));
+    expect(server.relayRegistry.get(credential.deviceId)?.state).toBe("EXECUTOR_FAILED");
+    expect(starts).toBe(1);
+    expect(executed).toBe(1);
+    expect(agent.connections).toBe(1);
+  });
+
   it("keeps an old Agent on legacy calls and reports the recovery limitation", async () => {
     const server = await startTestServer();
     cleanups.push(() => server.close());
