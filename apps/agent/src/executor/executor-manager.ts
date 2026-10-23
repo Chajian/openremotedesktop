@@ -20,7 +20,9 @@ export class ExecutorManager {
   private epoch = 0;
   private starting: { epoch: number; promise: Promise<void> } | undefined;
   private restarting: Promise<void> | undefined;
+  private unconfirmedShutdown: Error | undefined;
   private readonly invalidationListeners = new Set<() => void>();
+  private readonly stateListeners = new Set<(state: DeviceState) => void>();
 
   constructor(options: ExecutorManagerOptions) {
     this.startClient = options.startClient;
@@ -40,12 +42,31 @@ export class ExecutorManager {
     return () => { this.invalidationListeners.delete(listener); };
   }
 
+  onStateChanged(listener: (state: DeviceState) => void): () => void {
+    this.stateListeners.add(listener);
+    return () => { this.stateListeners.delete(listener); };
+  }
+
+  private assertShutdownConfirmed(): void {
+    if (this.unconfirmedShutdown) throw this.unconfirmedShutdown;
+  }
+
+  private async closeClient(client: ExecutorClient): Promise<void> {
+    try {
+      await client.close();
+    } catch (cause) {
+      this.unconfirmedShutdown = new Error("Previous executor shutdown could not be confirmed", { cause });
+      throw this.unconfirmedShutdown;
+    }
+  }
+
   async start(): Promise<void> {
     if (this.restarting) return this.restarting;
     return this.startInternal();
   }
 
   private async startInternal(): Promise<void> {
+    this.assertShutdownConfirmed();
     if (this.currentState === "READY" && this.client) return;
     if (this.starting?.epoch === this.epoch) return this.starting.promise;
     const epoch = this.epoch;
@@ -64,12 +85,12 @@ export class ExecutorManager {
     try {
       const client = await this.startClient();
       if (epoch !== this.epoch) {
-        await client.close().catch(() => undefined);
+        await this.closeClient(client);
         return;
       }
       const tools = await client.listTools();
       if (epoch !== this.epoch || tools.length === 0) {
-        await client.close().catch(() => undefined);
+        await this.closeClient(client);
         if (epoch !== this.epoch) return;
         throw new Error("Desktop Commander exposed no tools");
       }
@@ -89,13 +110,20 @@ export class ExecutorManager {
 
   async restart(): Promise<void> {
     if (this.restarting) return this.restarting;
+    this.assertShutdownConfirmed();
+    const pendingStart = this.starting?.promise;
     const previous = this.client;
     this.invalidateClient();
     // Do not advertise READY or accept new calls while the stale process closes.
     this.setState("EXECUTOR_FAILED");
     const epoch = this.epoch;
     const replacement = (async () => {
-      if (previous) await previous.close().catch(() => undefined);
+      // A startup invalidated by this restart may still own a live subprocess.
+      if (pendingStart) {
+        await pendingStart.catch(() => undefined);
+        this.assertShutdownConfirmed();
+      }
+      if (previous) await this.closeClient(previous);
       if (epoch === this.epoch) await this.startInternal();
     })();
     this.restarting = replacement;
@@ -128,10 +156,12 @@ export class ExecutorManager {
   async close(): Promise<void> {
     const client = this.client;
     this.invalidateClient();
-    if (client) await client.close();
-    if (this.currentState !== "REVOKED") {
-      this.currentState = "OFFLINE";
-      this.onState("OFFLINE");
+    try {
+      if (client) await this.closeClient(client);
+    } finally {
+      if (this.currentState !== "REVOKED") {
+        this.setState("OFFLINE");
+      }
     }
   }
 
@@ -144,5 +174,8 @@ export class ExecutorManager {
   private setState(state: DeviceState): void {
     this.currentState = state;
     this.onState(state);
+    for (const listener of this.stateListeners) {
+      try { listener(state); } catch { /* Status observers must not affect the executor. */ }
+    }
   }
 }

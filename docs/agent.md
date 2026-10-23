@@ -56,8 +56,12 @@ A local MCP operation that remains unsettled for 10 minutes triggers a *local ex
 recycle* to recover capacity. The Agent records its running operations as
 `EXECUTION_UNKNOWN` before replacing the executor and never replays them.
 This can interrupt legitimately slow local operations and does not undo effects
-already produced. The Server sees `EXECUTOR_FAILED -> EXECUTOR_STARTING -> READY`
-during recovery; ordinary network-only reconnects do not recycle the executor.
+already produced. The Server transitions from `EXECUTOR_FAILED` to
+`EXECUTOR_STARTING` and then `READY`. The STARTING event is sent only after
+the old process closes.
+If shutdown cannot be confirmed, the Server remains `EXECUTOR_FAILED` and an
+operator must resolve the failure rather than launch another local executor.
+Ordinary network-only reconnects do not recycle the executor.
 The hard deadline can be adjusted in `RelayClientOptions.stalledOperationTimeoutMs`.
 
 Retryable network/handshake and token-refresh transport failures also use this

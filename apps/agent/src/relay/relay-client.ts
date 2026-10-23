@@ -224,9 +224,11 @@ export class RelayClient {
         });
       }
     };
-    // The server must stop admitting new work while the local executor is recycled.
+    // The actual local state change occurs only after the old executor closed.
+    const unsubscribe = this.options.executor.onStateChanged((state) => {
+      if (state === "EXECUTOR_STARTING") status("EXECUTOR_STARTING");
+    });
     status("EXECUTOR_FAILED");
-    status("EXECUTOR_STARTING");
     try {
       await this.options.executor.restart();
       if (this.options.executor.state() !== "READY") {
@@ -244,6 +246,8 @@ export class RelayClient {
     } catch {
       status("EXECUTOR_FAILED");
       throw new Error("Stalled local executor could not be restarted");
+    } finally {
+      unsubscribe();
     }
   }
 

@@ -119,3 +119,71 @@ it("serializes executor replacement and blocks new startup until the old subproc
   expect(manager.state()).toBe("READY");
   expect(old.closeCalls).toBe(1);
 });
+
+it("does not start a replacement after the old executor reports an unconfirmed shutdown", async () => {
+  let created = 0;
+  const old = fakeClient();
+  old.close = async () => { throw new Error("close failed"); };
+  const manager = new ExecutorManager({
+    startClient: async () => (++created === 1 ? old : fakeClient()),
+  });
+  await manager.start();
+  await expect(manager.restart()).rejects.toThrow(/shutdown|close/i);
+  expect(manager.state()).toBe("EXECUTOR_FAILED");
+  await expect(manager.start()).rejects.toThrow(/shutdown|close/i);
+  await expect(manager.restart()).rejects.toThrow(/shutdown|close/i);
+  manager.markCrashed();
+  await expect(manager.start()).rejects.toThrow(/shutdown|close/i);
+  expect(created).toBe(1);
+});
+
+it("waits for an invalidated in-progress startup before launching the replacement", async () => {
+  let release!: () => void;
+  const old = fakeClient();
+  let started = 0;
+  const manager = new ExecutorManager({startClient: async () => {
+    if (++started === 1) await new Promise<void>(resolve => { release = resolve; });
+    return started === 1 ? old : fakeClient();
+  }});
+  const pendingStart = manager.start();
+  const replacement = manager.restart();
+  await Promise.resolve();
+  expect(started).toBe(1);
+  release();
+  await Promise.all([pendingStart, replacement]);
+  expect(old.closeCalls).toBe(1);
+  expect(started).toBe(2);
+  expect(manager.state()).toBe("READY");
+});
+
+it("fences recovery when a superseded startup cannot close its subprocess", async () => {
+  let release!: () => void;
+  let started = 0;
+  const manager = new ExecutorManager({ startClient: async () => {
+    started++;
+    await new Promise<void>(resolve => { release = resolve; });
+    const client = fakeClient();
+    client.close = async () => { throw new Error("unable to stop pending startup"); };
+    return client;
+  } });
+  const initial = manager.start();
+  const replacement = manager.restart();
+  release();
+  await expect(initial).rejects.toThrow(/shutdown/i);
+  await expect(replacement).rejects.toThrow(/shutdown/i);
+  expect(manager.state()).toBe("EXECUTOR_FAILED");
+  await expect(manager.start()).rejects.toThrow(/shutdown/i);
+  expect(started).toBe(1);
+});
+
+it("reports OFFLINE after a failed shutdown but forbids reusing the manager", async () => {
+  const client = fakeClient();
+  client.close = async () => { throw new Error("close failed"); };
+  let starts = 0;
+  const manager = new ExecutorManager({ startClient: async () => { starts++; return client; } });
+  await manager.start();
+  await expect(manager.close()).rejects.toThrow(/shutdown/i);
+  expect(manager.state()).toBe("OFFLINE");
+  await expect(manager.start()).rejects.toThrow(/shutdown/i);
+  expect(starts).toBe(1);
+});
