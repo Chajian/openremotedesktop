@@ -337,4 +337,37 @@ describe("review follow-up: safe dispatch and persistence failures", () => {
     expect(f.socket.sent).toHaveLength(0);
     expect(f.db.prepare("SELECT COUNT(*) AS count FROM operations").get()).toMatchObject({ count: 0 });
   });
+
+  it("preserves the operation ID and timeout error when markUnknown fails", async () => {
+    const f = fixture();
+    vi.spyOn(f.repository, "markUnknown").mockImplementation(() => { throw new Error("SQLITE_BUSY"); });
+    const { pending, call } = await dispatched(f);
+    await expect(pending).rejects.toMatchObject({
+      code: "REQUEST_TIMEOUT", details: { operationId: call.requestId, recovery: true },
+    });
+    expect(f.logger.event).toHaveBeenCalledWith("operation.evidence_store_failed",
+      expect.objectContaining({ operationId: call.requestId, deviceId: f.device.id }));
+    expect(f.socket.sent.filter(x => x.type === "operation.call")).toHaveLength(1);
+  });
+
+  it("keeps pre-dispatch rejection when discarding metadata fails", async () => {
+    const f = fixture(false, undefined, 0);
+    vi.spyOn(f.repository, "discardNotDispatched").mockImplementation(() => { throw new Error("SQLITE_BUSY"); });
+    await expect(f.service.invoke(f.actor, f.device.id, "write_file", {}, { timeoutMs: 20 }))
+      .rejects.toMatchObject({ code: "REQUEST_TIMEOUT", details: { reason: "capacity", dispatched: false } });
+    const correlations = Reflect.get(f.service, "legacySockets") as WeakMap<object, Map<string, number>>;
+    expect(correlations.get(f.socket)?.size ?? 0).toBe(0);
+    expect(f.socket.sent).toHaveLength(0);
+    expect(f.logger.event).toHaveBeenCalledWith("operation.evidence_store_failed", expect.anything());
+  });
+
+  it("does not let a failing persistence warning handler mask the original call error", async () => {
+    const f = fixture();
+    vi.spyOn(f.repository, "markUnknown").mockImplementation(() => { throw new Error("SQLITE_BUSY"); });
+    f.logger.event.mockImplementation(() => { throw new Error("logger broken"); });
+    const { pending, call } = await dispatched(f);
+    await expect(pending).rejects.toMatchObject({
+      code: "REQUEST_TIMEOUT", details: { operationId: call.requestId },
+    });
+  });
 });

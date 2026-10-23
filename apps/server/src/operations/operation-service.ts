@@ -72,12 +72,15 @@ export class OperationService {
   ) {
     this.now = options.now ?? Date.now;
     broker.setEvidenceHandler((response, connection) => this.observe(response, connection));
-    broker.setEvidenceFailureHandler((message) => {
-      this.options.logger?.event("operation.evidence_store_failed", {
-        operationId: message.requestId,
-        deviceId: message.deviceId,
-      });
-    });
+    broker.setEvidenceFailureHandler((message) => this.logEvidenceFailure(message.requestId, message.deviceId));
+  }
+
+  private logEvidenceFailure(operationId: string, deviceId: string): void {
+    try {
+      this.options.logger?.event("operation.evidence_store_failed", { operationId, deviceId });
+    } catch {
+      // Telemetry must not replace the original execution or persistence error.
+    }
   }
 
   private pruneLegacy(socket: WebSocket): Map<string, number> | undefined {
@@ -165,15 +168,23 @@ export class OperationService {
     } catch (error) {
       if (error instanceof PreDispatchRejectedError) {
         if (!record.bootId) this.legacySockets.get(connection.socket)?.delete(operationId);
-        this.repository.discardNotDispatched(operationId);
+        try {
+          this.repository.discardNotDispatched(operationId);
+        } catch {
+          this.logEvidenceFailure(operationId, deviceId);
+        }
         if (!await this.policy.allows(actor, deviceId, record)) {
           throw new RelayRequestError("DEVICE_NOT_FOUND", "Requested device was not found");
         }
         // No operation ID or recovery promise for a command that was never sent.
         throw error;
       }
-      this.repository.markUnknown(operationId, this.now(),
-        error instanceof RelayRequestError && error.code === "REQUEST_CANCELLED");
+      try {
+        this.repository.markUnknown(operationId, this.now(),
+          error instanceof RelayRequestError && error.code === "REQUEST_CANCELLED");
+      } catch {
+        this.logEvidenceFailure(operationId, deviceId);
+      }
       if (!await this.policy.allows(actor, deviceId, record)) {
         throw new RelayRequestError("DEVICE_NOT_FOUND", "Requested device was not found");
       }
