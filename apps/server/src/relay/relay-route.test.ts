@@ -267,3 +267,21 @@ describe("operation recovery negotiation", () => {
     expect(handled).toEqual([]);
   });
 });
+
+it("accepts an executor watchdog replacement without severing the authenticated Relay connection", () => {
+  const { registry, devices, device } = fixture();
+  const socket = new FakeSocket();
+  registry.attach(device.id, socket as never);
+  registry.markAuthenticated(device.id, socket as never);
+  registry.markExecutorState(device.id, socket as never, "EXECUTOR_STARTING");
+  registry.markExecutorState(device.id, socket as never, "READY");
+  const receive = (message: object) => handleRelayPayload(registry, devices, device.id,
+    socket as never, JSON.stringify({protocolVersion: 1, deviceId: device.id, ...message}));
+  receive({type: "agent.executor_status", state: "EXECUTOR_FAILED"});
+  expect(registry.get(device.id)?.state).toBe("EXECUTOR_FAILED");
+  receive({type: "agent.executor_status", state: "EXECUTOR_STARTING"});
+  expect(registry.get(device.id)?.state).toBe("EXECUTOR_STARTING");
+  receive({type: "agent.ready", desktopCommanderVersion: "0.2.52", capabilities: ["desktop-commander", "operation-recovery-v1"]});
+  expect(registry.get(device.id)?.state).toBe("READY");
+  expect(socket.closeCalls).toHaveLength(0);
+});

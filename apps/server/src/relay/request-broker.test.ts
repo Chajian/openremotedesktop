@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ToolResultMessage } from "@open-desktop-remote/protocol";
 import type { WebSocket } from "ws";
 import { ConnectionRegistry } from "./connection-registry.js";
-import { RelayRequestError, RequestBroker } from "./request-broker.js";
+import { PreDispatchRejectedError, RelayRequestError, RequestBroker } from "./request-broker.js";
 
 const deviceId = "6d1cf056-7fc5-49d4-8930-f989aafd957b";
 
@@ -177,4 +177,13 @@ it("bounds call waiters independently of query capacity and releases a cancelled
  await expect(broker.call(deviceId,"read_file",{},{timeoutMs:1000})).rejects.toMatchObject({code:"REQUEST_TIMEOUT",details:{reason:"capacity"}});
  expect(socket.sent).toHaveLength(1);broker.cancel(JSON.parse(socket.sent[0]!).requestId);await expect(first).rejects.toMatchObject({code:"REQUEST_CANCELLED"});
  const second=broker.call(deviceId,"read_file",{},{timeoutMs:1000});broker.cancel(JSON.parse(socket.sent[2]!).requestId);await expect(second).rejects.toMatchObject({code:"REQUEST_CANCELLED"});
+});
+
+it("distinguishes a capacity refusal from a sent request", async () => {
+  const { registry, socket } = readyFixture();
+  const broker = new RequestBroker(registry, { maxPendingCalls: 0 });
+  const caught = await broker.call(deviceId, "write_file", {}, { timeoutMs: 100 }).catch((error: unknown) => error);
+  expect(caught).toBeInstanceOf(PreDispatchRejectedError);
+  expect(caught).toMatchObject({ details: { dispatched: false, reason: "capacity" } });
+  expect(socket.sent).toHaveLength(0);
 });

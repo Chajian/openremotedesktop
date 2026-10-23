@@ -52,6 +52,14 @@ The Agent:
 
 Reconnect uses exponential backoff with jitter. A network-only reconnect leaves the local Desktop Commander process alive, preserving its interactive process/session state.
 
+A local MCP operation that remains unsettled for 10 minutes triggers a *local executor
+recycle* to recover capacity. The Agent records its running operations as
+`EXECUTION_UNKNOWN` before replacing the executor and never replays them.
+This can interrupt legitimately slow local operations and does not undo effects
+already produced. The Server sees `EXECUTOR_FAILED -> EXECUTOR_STARTING -> READY`
+during recovery; ordinary network-only reconnects do not recycle the executor.
+The hard deadline can be adjusted in `RelayClientOptions.stalledOperationTimeoutMs`.
+
 Retryable network/handshake and token-refresh transport failures also use this
 backoff. Rejected credentials and incompatible protocol remain terminal. Reconnect
 does not resend a previously dispatched tool call.
@@ -125,3 +133,9 @@ Older peers continue working with legacy calls, but do not gain this recovery pa
 ## Stopping
 
 Ctrl+C / SIGTERM aborts the relay loop and closes the local Desktop Commander client.
+
+A `REQUEST_TIMEOUT` with `details.dispatched: false` and a capacity reason is
+rejected *before* sending any command; it has no recoverable operation ID.
+A Server metadata-storage fault is not treated as a malformed Relay message:
+an already-correlated response can still be delivered, but stored evidence
+may be incomplete until a later read-only query reconciles it.

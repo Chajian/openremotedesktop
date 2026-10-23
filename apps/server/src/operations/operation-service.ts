@@ -8,7 +8,7 @@ import type {
 import type { WebSocket } from "ws";
 import type { ServerLogger } from "../logging.js";
 import type { LiveDeviceConnection } from "../relay/connection-registry.js";
-import { RelayRequestError, type RequestBroker } from "../relay/request-broker.js";
+import { PreDispatchRejectedError, RelayRequestError, type RequestBroker } from "../relay/request-broker.js";
 import type { OperationAccessPolicy, OperationActor } from "./access-policy.js";
 import {
   OperationRepository,
@@ -72,6 +72,12 @@ export class OperationService {
   ) {
     this.now = options.now ?? Date.now;
     broker.setEvidenceHandler((response, connection) => this.observe(response, connection));
+    broker.setEvidenceFailureHandler((message) => {
+      this.options.logger?.event("operation.evidence_store_failed", {
+        operationId: message.requestId,
+        deviceId: message.deviceId,
+      });
+    });
   }
 
   private pruneLegacy(socket: WebSocket): Map<string, number> | undefined {
@@ -142,15 +148,14 @@ export class OperationService {
       }
       ids.set(operationId, record.retentionUntil);
     }
-    this.options.logger?.event("operation.dispatch", {
-      operationId, deviceId, toolName, recovery: Boolean(record.bootId),
-    });
-
     try {
       const result = await this.broker.call(deviceId, toolName, args, {
         timeoutMs: options.timeoutMs,
         requestId: operationId,
         connection,
+        onDispatched: () => this.options.logger?.event("operation.dispatch", {
+          operationId, deviceId, toolName, recovery: Boolean(record.bootId),
+        }),
         ...(record.bootId ? { bootId: record.bootId, expiresAt: record.expiresAt } : {}),
       });
       if (!await this.policy.allows(actor, deviceId, record)) {
@@ -158,6 +163,14 @@ export class OperationService {
       }
       return result;
     } catch (error) {
+      if (error instanceof PreDispatchRejectedError) {
+        this.repository.discardNotDispatched(operationId);
+        if (!await this.policy.allows(actor, deviceId, record)) {
+          throw new RelayRequestError("DEVICE_NOT_FOUND", "Requested device was not found");
+        }
+        // No operation ID or recovery promise for a command that was never sent.
+        throw error;
+      }
       this.repository.markUnknown(operationId, this.now(),
         error instanceof RelayRequestError && error.code === "REQUEST_CANCELLED");
       if (!await this.policy.allows(actor, deviceId, record)) {

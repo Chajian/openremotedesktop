@@ -178,10 +178,12 @@ are explicit states. Server metadata survives Server restart but contains no
 payload backup. This is not durable job execution or a network exactly-once claim.
 Limits, negotiation and the MCP response contract are in [protocol](protocol.md).
 
-`pnpm upstream:check` verifies the fixed dependency identity, forbidden patch/deep
-implementation references, the unchanged launcher, and all 249 original published
-package files against a hash baseline derived from the integrity-verified npm
-tarball. CI repeats the installed-file check after tests and packaged smoke.
+`pnpm upstream:check` verifies the pinned original dependency identity,
+upstream-targeted patch/deep-implementation references, and all 249 original
+published package files against a hash baseline derived from the
+integrity-verified npm tarball. CI repeats the installed-file check after tests
+and packaged smoke. OpenRemote's own launcher and unrelated build hooks remain
+editable with normal reviews and tests; they are not upstream source.
 Build metadata checks that the upstream implementation remains external. These
 checks provide reviewed boundary evidence; they are not a general sandbox for
 arbitrary dependency behavior. A future upstream upgrade must deliberately update

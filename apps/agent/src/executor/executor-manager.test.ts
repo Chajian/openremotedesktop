@@ -100,3 +100,22 @@ it("does not let a late startup overwrite an invalidated executor epoch", async 
   const pending = manager.start(); manager.markIncompatible(); release(); await pending;
   expect(manager.state()).toBe("INCOMPATIBLE"); expect(client.closeCalls).toBe(1);
 });
+
+it("serializes executor replacement and blocks new startup until the old subprocess is closed", async () => {
+  let release!: () => void;
+  const old = fakeClient();
+  old.close = async () => { old.closeCalls++; await new Promise<void>((resolve) => { release = resolve; }); };
+  const next = fakeClient();
+  let factoryCalls = 0;
+  const manager = new ExecutorManager({ startClient: async () => (++factoryCalls === 1 ? old : next) });
+  await manager.start();
+  const replacement = manager.restart();
+  expect(manager.state()).toBe("EXECUTOR_FAILED");
+  const inParallel = manager.start();
+  expect(factoryCalls).toBe(1);
+  release();
+  await Promise.all([replacement, inParallel]);
+  expect(factoryCalls).toBe(2);
+  expect(manager.state()).toBe("READY");
+  expect(old.closeCalls).toBe(1);
+});

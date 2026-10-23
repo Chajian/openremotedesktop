@@ -53,6 +53,8 @@ export type RelayClientOptions = {
   now?: () => number;
   random?: () => number;
   stableConnectionMs?: number;
+  /** Hard cap for a single unresponsive local MCP execution (default: 10m). */
+  stalledOperationTimeoutMs?: number;
 };
 
 function relayUrl(serverUrl: string): URL {
@@ -203,12 +205,46 @@ export class RelayClient {
     this.stableConnectionMs = options.stableConnectionMs ?? 30_000;
     this.bootId = options.bootId ?? options.operations?.store.bootId ?? PROCESS_BOOT_ID;
     this.operations = options.operations ?? new OperationCoordinator(options.executor,
-      new OperationStore({ deviceId: options.credential.deviceId, bootId: this.bootId, now: this.now }));
+      new OperationStore({ deviceId: options.credential.deviceId, bootId: this.bootId, now: this.now }),
+      { ...(options.stalledOperationTimeoutMs === undefined ? {} : { maxExecutionMs: options.stalledOperationTimeoutMs }), recoverExecutor: () => this.recoverStalledExecutor() });
     if (this.operations.store.bootId !== this.bootId || this.operations.store.deviceId !== options.credential.deviceId) {
       throw new Error("Operation store identity does not match this Agent");
     }
     this.operationQuery = new OperationQuery(this.operations.store);
     options.executor.onInvalidated?.(() => this.operations.invalidateRunning());
+  }
+
+  private async recoverStalledExecutor(): Promise<void> {
+    const original = this.session;
+    const status = (state: "EXECUTOR_FAILED" | "EXECUTOR_STARTING") => {
+      if (original && this.session === original) {
+        send(original.socket, {
+          type: "agent.executor_status", protocolVersion: PROTOCOL_VERSION,
+          deviceId: this.options.credential.deviceId, state,
+        });
+      }
+    };
+    // The server must stop admitting new work while the local executor is recycled.
+    status("EXECUTOR_FAILED");
+    status("EXECUTOR_STARTING");
+    try {
+      await this.options.executor.restart();
+      if (this.options.executor.state() !== "READY") {
+        status("EXECUTOR_FAILED");
+        return;
+      }
+      if (original && this.session === original) {
+        send(original.socket, {
+          type: "agent.ready", protocolVersion: PROTOCOL_VERSION,
+          deviceId: this.options.credential.deviceId,
+          desktopCommanderVersion: "0.2.52",
+          capabilities: ["desktop-commander", OPERATION_RECOVERY_CAPABILITY],
+        });
+      }
+    } catch {
+      status("EXECUTOR_FAILED");
+      throw new Error("Stalled local executor could not be restarted");
+    }
   }
 
   async connectOnce(
