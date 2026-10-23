@@ -87,7 +87,7 @@ export class DesktopCommanderClient {
     }));
   }
 
-  async callTool(name: string, args: unknown): Promise<CallToolResult> {
+  async callTool(name: string, args: unknown, options?: { timeoutMs: number }): Promise<CallToolResult> {
     const argumentsValue =
       args !== null && typeof args === "object"
         ? (args as Record<string, unknown>)
@@ -95,6 +95,11 @@ export class DesktopCommanderClient {
     return this.client.callTool({
       name,
       arguments: argumentsValue,
+    }, options === undefined ? undefined : {
+      // Both the per-request and total SDK timers must remain after the
+      // Agent watchdog. Its recovery, not the SDK timeout, owns hung calls.
+      timeout: options.timeoutMs,
+      maxTotalTimeout: options.timeoutMs,
     });
   }
 
