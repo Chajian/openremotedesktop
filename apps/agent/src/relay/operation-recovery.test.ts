@@ -347,3 +347,35 @@ it("retries a network close during the actual WebSocket handshake", async () => 
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });
+
+it("restarts a stalled local executor, announces states and keeps old operation unknown without redispatch", async () => {
+  let calls = 0;
+  let starts = 0;
+  const executor = new ExecutorManager({ startClient: async () => {
+    starts++;
+    return { listTools: async () => [{ name: "write_file" }], close: async () => undefined,
+      callTool: async () => { calls++; if (calls === 1) return new Promise(() => undefined); return { content: [{ type: "text", text: "new" }] }; } };
+  } });
+  await executor.start();
+  const socket = new Socket();
+  const relay = new RelayClient({ credential, executor, heartbeatIntervalMs: 0,
+    stalledOperationTimeoutMs: 20, now: () => 1_000,
+    refreshToken: async () => ({ accessToken: "test", expiresAt: 999999, deviceId }),
+    socketFactory: async () => socket,
+  });
+  const pending = relay.connectOnce(new AbortController().signal);
+  await vi.waitFor(() => expect(socket.sent.some((m) => m.type === "agent.ready")).toBe(true));
+  socket.receive(notice);
+  const message = { type: "operation.call" as const, protocolVersion: 1 as const,
+    requestId: randomUUID(), deviceId, bootId: relay.bootId, toolName: "write_file", arguments: {}, expiresAt: 61_000 };
+  socket.receive(message);
+  await vi.waitFor(() => expect(starts).toBe(2), { timeout: 1000 });
+  expect(socket.sent.filter((m) => m.type === "agent.executor_status").map((m) => m.state))
+    .toEqual(["EXECUTOR_FAILED", "EXECUTOR_STARTING"]);
+  const queryId = randomUUID();
+  socket.receive({ type: "operation.query", protocolVersion: 1, deviceId, bootId: relay.bootId,
+    requestId: message.requestId, queryId, includeResult: true });
+  expect(socket.sent.at(-1)).toMatchObject({ type: "operation.status", queryId, snapshot: { state: "completed", outcome: "unknown" } });
+  expect(calls).toBe(1);
+  socket.close(); await pending;
+});

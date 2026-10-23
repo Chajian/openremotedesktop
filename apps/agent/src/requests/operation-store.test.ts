@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { OperationCallMessage } from "@open-desktop-remote/protocol";
 import { OperationCoordinator, OperationStore } from "./operation-store.js";
 import { OperationQuery } from "./operation-query.js";
@@ -155,4 +155,52 @@ it("does not dispatch an admitted operation after its executor was invalidated b
   const coordinator = new OperationCoordinator({ async callTool() { effects++; return {}; } }, store);
   const pending = coordinator.handle(call()); coordinator.invalidateRunning(); await pending;
   await Promise.resolve(); expect(effects).toBe(0);
+});
+
+it("starts bounded recovery for a hung execution, retains unknown evidence and admits new work without replay", async () => {
+  vi.useFakeTimers();
+  try {
+    let restarts = 0;
+    let effects = 0;
+    const store = new OperationStore({ deviceId, bootId, now: () => 1000, maxInFlight: 1 });
+    let coordinator!: OperationCoordinator;
+    const executor = { callTool: async () => {
+      effects++;
+      if (effects === 1) return new Promise(() => undefined);
+      return { content: [{ type: "text", text: "second" }] };
+    } };
+    coordinator = new OperationCoordinator(executor, store, {
+      maxExecutionMs: 50,
+      recoverExecutor: async () => { restarts++; coordinator.invalidateRunning(); },
+    });
+    const message = call();
+    const first = coordinator.handle(message);
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(await first).toMatchObject({ error: { code: "EXECUTION_UNKNOWN" } });
+    expect(store.read(message.requestId, bootId, false)).toMatchObject({ state: "completed", outcome: "unknown" });
+    expect(restarts).toBe(1);
+    const second = await coordinator.handle(call());
+    expect(second.type).toBe("tool.result");
+    expect(effects).toBe(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("clears a completed operation watchdog without restarting the executor", async () => {
+  vi.useFakeTimers();
+  try {
+    let restarts = 0;
+    const store = new OperationStore({ deviceId, bootId, now: () => 1000 });
+    const coordinator = new OperationCoordinator({ callTool: async () => ({ content: [] }) }, store, {
+      maxExecutionMs: 50,
+      recoverExecutor: async () => { restarts++; },
+    });
+    expect((await coordinator.handle(call())).type).toBe("tool.result");
+    await vi.advanceTimersByTimeAsync(100);
+    expect(restarts).toBe(0);
+  } finally {
+    vi.useRealTimers();
+  }
 });

@@ -32,6 +32,14 @@ export class RelayRequestError extends Error {
   }
 }
 
+/** A rejection that happened before any attempt to send a command. */
+export class PreDispatchRejectedError extends RelayRequestError {
+  constructor(code: ProtocolErrorCode, message: string, details: Record<string, unknown> = {}) {
+    super(code, message, { ...details, dispatched: false });
+    this.name = "PreDispatchRejectedError";
+  }
+}
+
 export class RequestBroker {
   private readonly pending = new Map<string, PendingRequest>();
   private readonly queries = new Map<string, {
@@ -41,8 +49,10 @@ export class RequestBroker {
     reject: (error: RelayRequestError) => void;
   }>();
   private evidence?: (message: ToolResultMessage | ToolErrorMessage, connection: LiveDeviceConnection) => boolean;
+  private evidenceFailure?: (message: ToolResultMessage | ToolErrorMessage) => void;
 
   setEvidenceHandler(handler: NonNullable<RequestBroker["evidence"]>): void { this.evidence = handler; }
+  setEvidenceFailureHandler(handler: NonNullable<RequestBroker["evidenceFailure"]>): void { this.evidenceFailure = handler; }
   connection(deviceId: string): LiveDeviceConnection | undefined { return this.registry.get(deviceId); }
 
 
@@ -52,17 +62,17 @@ export class RequestBroker {
     deviceId: string,
     toolName: string,
     args: unknown,
-    options: { timeoutMs: number; requestId?: string; bootId?: string; expiresAt?: number; connection?: LiveDeviceConnection },
+    options: { timeoutMs: number; requestId?: string; bootId?: string; expiresAt?: number; connection?: LiveDeviceConnection; onDispatched?: () => void },
   ): Promise<BrokerResult> {
     const connection = this.registry.get(deviceId);
     if (!connection || (options.connection && options.connection !== connection)) {
       return Promise.reject(
-        new RelayRequestError("DEVICE_OFFLINE", "Device is offline"),
+        new PreDispatchRejectedError("DEVICE_OFFLINE", "Device is offline"),
       );
     }
     if (connection.state !== "READY") {
       return Promise.reject(
-        new RelayRequestError(
+        new PreDispatchRejectedError(
           "DEVICE_NOT_READY",
           `Device is not READY (state: ${connection.state})`,
           { state: connection.state },
@@ -71,7 +81,7 @@ export class RequestBroker {
     }
 
     if (this.pending.size >= (this.options.maxPendingCalls ?? 1024)) {
-      return Promise.reject(new RelayRequestError("REQUEST_TIMEOUT", "Request waiter capacity reached", {reason: "capacity"}));
+      return Promise.reject(new PreDispatchRejectedError("REQUEST_TIMEOUT", "Request waiter capacity reached", {reason: "capacity"}));
     }
     const requestId = options.requestId ?? randomUUID();
     return new Promise<BrokerResult>((resolve, reject) => {
@@ -101,6 +111,8 @@ export class RequestBroker {
               ? (args as Record<string, unknown>)
               : {},
         });
+        // Dispatch telemetry must never change delivery semantics.
+        try { options.onDispatched?.(); } catch { /* Ignore logger failure. */ }
       } catch {
         clearTimeout(timer);
         this.pending.delete(requestId);
@@ -120,7 +132,17 @@ export class RequestBroker {
     // The optional socket supports the legacy in-process API. Relay callers always
     // supply it; only authenticated socket evidence can update operation records.
     if (!connection || (socket && connection.socket !== socket)) return;
-    if (socket && this.evidence && !this.evidence(message, connection)) return;
+    if (socket && this.evidence) {
+      try {
+        if (!this.evidence(message, connection)) return;
+      } catch {
+        // Persistence is supplementary to an authenticated, already-correlated
+        // reply. Never reclassify a SQLite outage as a malformed Relay frame.
+        try { this.evidenceFailure?.(message); } catch { /* Logging must never tear down Relay. */ }
+        // Unsolicited/late replies cannot be accepted without durable evidence.
+        if (!pending) return;
+      }
+    }
     if (!pending || pending.deviceId !== message.deviceId || pending.connection !== connection) return;
 
     clearTimeout(pending.timer);

@@ -112,6 +112,13 @@ process identity. Query replies additionally match a separate query ID. Conflict
 terminal evidence is recorded and its payload withheld. Cancellation is a request,
 not proof of nonexecution or rollback.
 
+If the Server's metadata database fails while a correlated, authenticated result
+is being delivered, the Broker does not close the Relay as a protocol violation.
+It can deliver the pending result while logging an evidence-store failure; a
+later recovery query may need to reconcile missing terminal metadata. No result
+body is added to SQLite as part of this fallback. Hung local execution is
+handled by a bounded executor recycle, never by an automatic mutation retry.
+
 ## MCP client safety
 
 Only connect MCP clients you trust to your Server and only publish the custom app to users who should have the underlying machine authority.

@@ -19,6 +19,7 @@ export class ExecutorManager {
   private readonly onState: (state: DeviceState) => void;
   private epoch = 0;
   private starting: { epoch: number; promise: Promise<void> } | undefined;
+  private restarting: Promise<void> | undefined;
   private readonly invalidationListeners = new Set<() => void>();
 
   constructor(options: ExecutorManagerOptions) {
@@ -40,6 +41,11 @@ export class ExecutorManager {
   }
 
   async start(): Promise<void> {
+    if (this.restarting) return this.restarting;
+    return this.startInternal();
+  }
+
+  private async startInternal(): Promise<void> {
     if (this.currentState === "READY" && this.client) return;
     if (this.starting?.epoch === this.epoch) return this.starting.promise;
     const epoch = this.epoch;
@@ -82,11 +88,22 @@ export class ExecutorManager {
   }
 
   async restart(): Promise<void> {
+    if (this.restarting) return this.restarting;
     const previous = this.client;
     this.invalidateClient();
+    // Do not advertise READY or accept new calls while the stale process closes.
+    this.setState("EXECUTOR_FAILED");
     const epoch = this.epoch;
-    if (previous) await previous.close().catch(() => undefined);
-    if (epoch === this.epoch) await this.start();
+    const replacement = (async () => {
+      if (previous) await previous.close().catch(() => undefined);
+      if (epoch === this.epoch) await this.startInternal();
+    })();
+    this.restarting = replacement;
+    try {
+      await replacement;
+    } finally {
+      if (this.restarting === replacement) this.restarting = undefined;
+    }
   }
 
   markCrashed(): void {

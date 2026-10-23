@@ -19,7 +19,7 @@ class Socket {
   close() { }
   terminate() { }
 }
-function fixture(recovery = true, clock?: () => number) {
+function fixture(recovery = true, clock?: () => number, maxPendingCalls?: number) {
   const dir = mkdtempSync(join(tmpdir(), "odr-operations-"));
   const path = join(dir, "db.sqlite");
   const db = createDatabase(path);
@@ -34,14 +34,17 @@ function fixture(recovery = true, clock?: () => number) {
   registry.markExecutorState(device.id, socket as never, "READY");
   if (recovery)
     connection.bootId = randomUUID();
-  const broker = new RequestBroker(registry);
+  const broker = new RequestBroker(registry, maxPendingCalls === undefined ? {} : { maxPendingCalls });
   const repository = new OperationRepository(db);
-  const service = new OperationService(repository, broker, new OwnedOperationAccessPolicy(devices), clock ? { now: clock } : {});
+  const logger = {event: vi.fn()};
+  const service = new OperationService(repository, broker, new OwnedOperationAccessPolicy(devices), {
+    ...(clock ? { now: clock } : {}), logger,
+  });
   let authorized = true;
   const actor = { userId: "owner", clientId: "client", authorize: async () => authorized };
   const response = (requestId: string, text = "private-result-marker") => ({ type: "tool.result" as const, protocolVersion: 1 as const, deviceId: device.id, requestId, result: { content: [{ type: "text", text }] } });
   cleanups.push(() => { db.close(); rmSync(dir, { recursive: true, force: true }); });
-  return { db, path, devices, device, registry, socket, connection, broker, repository, service, actor, response, revoke: () => { authorized = false; } };
+  return { db, path, devices, device, registry, socket, connection, broker, repository, service, logger, actor, response, revoke: () => { authorized = false; } };
 }
 async function dispatched(f: ReturnType<typeof fixture>) {
   const pending = f.service.invoke(f.actor, f.device.id, "write_file", { path: "private-args-marker" }, { timeoutMs: 20 });
@@ -55,6 +58,8 @@ describe("operation service", () => {
     const f = fixture();
     const { pending, call } = await dispatched(f);
     const failure = expect(pending).rejects.toMatchObject({ code: "EXECUTION_UNKNOWN", details: { operationId: call.requestId } });
+    expect(f.logger.event).toHaveBeenCalledWith("operation.dispatch",
+      expect.objectContaining({ operationId: call.requestId, deviceId: f.device.id }));
     expect(call).toMatchObject({ type: "operation.call", bootId: f.connection.bootId });
     expect(call.expiresAt - Date.now()).toBeGreaterThan(59000);
     f.broker.handleDisconnect(f.device.id, f.socket as never);
@@ -300,4 +305,24 @@ it("reconciles a running query snapshot with completion during the final authori
     resultAvailability: "unavailable",
   });
   expect(result).not.toHaveProperty("snapshot");
+});
+
+describe("review follow-up: safe dispatch and persistence failures", () => {
+  it("does not retain an unknown executable operation when the broker rejected capacity before dispatch", async () => {
+    const f = fixture(true, undefined, 0);
+    const error = await f.service.invoke(f.actor, f.device.id, "write_file", {}, { timeoutMs: 20 }).catch((value: unknown) => value);
+    expect(error).toMatchObject({ code: "REQUEST_TIMEOUT", details: { reason: "capacity", dispatched: false } });
+    expect(f.socket.sent).toHaveLength(0);
+    expect(f.logger.event).not.toHaveBeenCalledWith("operation.dispatch", expect.anything());
+    expect(error).not.toHaveProperty("details.operationId");
+    expect(f.db.prepare("SELECT COUNT(*) AS count FROM operations").get()).toMatchObject({ count: 0 });
+  });
+
+  it("delivers an authenticated matching result despite a failed metadata write without treating it as a protocol error", async () => {
+    const f = fixture();
+    const { pending, call } = await dispatched(f);
+    vi.spyOn(f.repository, "terminal").mockImplementation(() => { throw new Error("SQLITE_BUSY"); });
+    expect(() => f.broker.handleMessage(f.response(call.requestId), f.socket as never)).not.toThrow();
+    await expect(pending).resolves.toEqual(f.response(call.requestId));
+  });
 });

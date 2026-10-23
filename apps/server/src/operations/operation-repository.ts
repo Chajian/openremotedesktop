@@ -45,6 +45,11 @@ export class OperationRepository {
     return row ? {...row, conflict: Boolean(row.conflict), cancelRequested: Boolean(row.cancelRequested)} : null;
   }
 
+  /** Remove a rejected request only if no execution or terminal evidence exists. */
+  discardNotDispatched(operationId: string): void {
+    this.db.prepare("DELETE FROM operations WHERE operation_id = ? AND phase = 'dispatched'").run(operationId);
+  }
+
   markUnknown(operationId: string, now: number, cancelled = false): void {
     this.db.prepare(`UPDATE operations SET phase = CASE WHEN phase = 'completed' THEN phase ELSE 'unknown' END,
       updated_at = ?, cancel_requested = MAX(cancel_requested, ?) WHERE operation_id = ?`)

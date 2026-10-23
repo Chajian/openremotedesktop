@@ -69,7 +69,6 @@ for (const config of [
   { overrides: { [upstream]: "npm:replacement" } },
   { resolutions: { [upstream]: "file:../fork" } },
   { pnpm: { packageExtensions: { [`${upstream}@*`]: { dependencies: { extra: "1" } } } } },
-  { devDependencies: { "patch-package": "8.0.0" } },
 ]) {
   test(`rejects package replacement/patch config ${JSON.stringify(config)}`, (t) => {
     const dir = fixture(t); manifest(dir, "package.json", config);
@@ -85,9 +84,13 @@ test("rejects pnpmfile hooks instead of executing them", (t) => {
   const dir = fixture(t); write(dir, ".pnpmfile.cjs", "throw new Error('must not execute');");
   rejects(check(dir), /pnpmfile/i);
 });
-test("rejects a workspace lifecycle hook that may rewrite packages", (t) => {
+test("permits unrelated project lifecycle hooks without touching upstream code", (t) => {
+  const dir = fixture(t); manifest(dir, "apps/example/package.json", { scripts: { postinstall: "node scripts/prepare-internal-assets.mjs" } });
+  assert.equal(check(dir).ok, true);
+});
+test("continues rejecting scripts that explicitly rewrite upstream packages", (t) => {
   const dir = fixture(t); manifest(dir, "apps/example/package.json", { scripts: { postinstall: "node scripts/rewrite-upstream.mjs" } });
-  rejects(check(dir), /lifecycle/i);
+  rejects(check(dir), /rewrite/i);
 });
 test("rejects an obvious upstream rewrite script", (t) => {
   const dir = fixture(t);
@@ -113,9 +116,13 @@ test("package.json exception permits resolve only, not implementation import", (
   write(dir, "scripts/smoke-packaged-agent.mjs", `import upstream from '${upstream}/package.json';`);
   rejects(check(dir), /deep.*import|package\.json.*resolution/i);
 });
-test("rejects a changed runtime launcher", (t) => {
-  const dir = fixture(t); write(dir, launcher, readFileSync(join(dir, launcher), "utf8") + "\n// changed\n");
-  rejects(check(dir), /launcher.*unchanged/i);
+test("permits changes to OpenRemote's own launcher without weakening upstream identity", (t) => {
+  const dir = fixture(t); write(dir, launcher, readFileSync(join(dir, launcher), "utf8") + "\n// own adapter improvement\n");
+  assert.equal(check(dir).ok, true);
+});
+test("still rejects a launcher that directly imports upstream implementation", (t) => {
+  const dir = fixture(t); write(dir, launcher, readFileSync(join(dir, launcher), "utf8") + `\nimport '${upstream}/dist/index.js';\n`);
+  rejects(check(dir), /deep.*import|implementation.*reference/i);
 });
 test("does not scan docs, test fixtures, dependencies or generated output as source", (t) => {
   const dir = fixture(t);
@@ -222,4 +229,20 @@ test("installed checker permits dependency manifests and ordinary runtime JSON",
   write(install.dir, "node_modules/dependency/package.json", JSON.stringify({ type: "commonjs" }));
   write(install.dir, "runtime/session.json", JSON.stringify({ state: "ready" }));
   assert.equal(checkInstall(install).ok, true);
+});
+
+test("permits unrelated workspace dependency overrides", (t) => {
+  const dir = fixture(t);
+  write(dir, "pnpm-workspace.yaml", 'packages:\n  - "packages/*"\noverrides:\n  lodash: 4.17.21\n');
+  assert.equal(check(dir).ok, true);
+});
+test("permits non-upstream lockfile patch metadata", (t) => {
+  const dir = fixture(t);
+  write(dir, "pnpm-lock.yaml", lock + "patchedDependencies:\n  unrelated-package@1.0.0:\n    hash: safe-metadata\n");
+  assert.equal(check(dir).ok, true);
+});
+test("permits unrelated workspace patch tooling without weakening upstream file verification", (t) => {
+  const dir = fixture(t);
+  manifest(dir, "package.json", { devDependencies: { "patch-package": "8.0.0" }, scripts: { postinstall: "node scripts/prepare-app.mjs" } });
+  assert.equal(check(dir).ok, true);
 });

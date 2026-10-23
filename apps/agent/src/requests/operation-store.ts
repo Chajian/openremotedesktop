@@ -208,11 +208,35 @@ export class OperationCoordinator {
     promise: Promise<OperationResponse>;
     resolve: (response: OperationResponse) => void;
   }>();
+  private readonly watchdogs = new Map<string, NodeJS.Timeout>();
+  private recoveringStalledExecutor = false;
 
   constructor(
     private readonly executor: { callTool(name: string, args: unknown): Promise<unknown> },
     readonly store: OperationStore,
+    private readonly options: { maxExecutionMs?: number; recoverExecutor?: () => Promise<void> } = {},
   ) {}
+
+  private armWatchdog(requestId: string): void {
+    if (!this.options.recoverExecutor) return;
+    // A hard executor deadline, never an instruction to retry the tool.
+    const timer = setTimeout(() => {
+      if (!this.active.has(requestId) || this.recoveringStalledExecutor) return;
+      this.recoveringStalledExecutor = true;
+      void this.options.recoverExecutor!().catch(() => {
+        // Recovery itself failed: do not preserve a phantom running slot.
+        this.invalidateRunning();
+      }).finally(() => { this.recoveringStalledExecutor = false; });
+    }, this.options.maxExecutionMs ?? 10 * 60_000);
+    timer.unref();
+    this.watchdogs.set(requestId, timer);
+  }
+
+  private clearWatchdog(requestId: string): void {
+    const timer = this.watchdogs.get(requestId);
+    if (timer) clearTimeout(timer);
+    this.watchdogs.delete(requestId);
+  }
 
   handle(call: OperationCallMessage): Promise<OperationResponse> {
     const admission = this.store.admit(call);
@@ -222,6 +246,7 @@ export class OperationCoordinator {
     const promise = new Promise<OperationResponse>((done) => { resolve = done; });
     const active = { promise, resolve };
     this.active.set(call.requestId, active);
+    this.armWatchdog(call.requestId);
     void Promise.resolve().then(async () => {
       if (this.active.get(call.requestId) !== active) return;
       let response: OperationResponse;
@@ -238,6 +263,7 @@ export class OperationCoordinator {
       if (this.active.get(call.requestId) !== active) return;
       const saved = this.store.complete(call.requestId, response, outcome);
       this.active.delete(call.requestId);
+      this.clearWatchdog(call.requestId);
       resolve(saved);
     });
     return promise;
@@ -250,6 +276,7 @@ export class OperationCoordinator {
       const response = errorResponse({ requestId, deviceId: this.store.deviceId }, "EXECUTOR_REPLACED", "EXECUTION_UNKNOWN");
       const saved = this.store.complete(requestId, response, "unknown");
       this.active.delete(requestId);
+      this.clearWatchdog(requestId);
       active.resolve(saved);
     }
   }
