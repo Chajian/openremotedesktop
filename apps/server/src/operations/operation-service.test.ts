@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { Client } from "@modelcontextprotocol/client";
+import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +12,7 @@ import { RequestBroker } from "../relay/request-broker.js";
 import { OperationRepository } from "./operation-repository.js";
 import { OwnedOperationAccessPolicy } from "./access-policy.js";
 import { OperationService } from "./operation-service.js";
+import { buildMcpServer } from "../mcp/mcp-handler.js";
 const cleanups: Array<() => void> = [];
 afterEach(() => { vi.useRealTimers(); while (cleanups.length)
   cleanups.pop()!(); });
@@ -370,4 +373,132 @@ describe("review follow-up: safe dispatch and persistence failures", () => {
       code: "REQUEST_TIMEOUT", details: { operationId: call.requestId },
     });
   });
+});
+
+it("keeps dispatched work and read-only recovery available when opportunistic cleanup fails", async () => {
+  const f = fixture();
+  vi.spyOn(f.repository, "cleanup").mockImplementation(() => {
+    throw Object.assign(new Error("temporary sqlite contention"), { code: "SQLITE_BUSY" });
+  });
+  f.logger.event.mockImplementationOnce(() => { throw new Error("logging sink also failed"); });
+  const { pending, call } = await dispatched(f);
+  f.broker.handleMessage(f.response(call.requestId), f.socket as never);
+  await expect(pending).resolves.toEqual(f.response(call.requestId));
+
+  const lookup = f.service.query(f.actor, call.requestId);
+  for (let i = 0; i < 10 && f.socket.sent.length < 2; i++) await Promise.resolve();
+  const query = f.socket.sent[1]!;
+  expect(query.type).toBe("operation.query");
+  f.broker.handleStatus({
+    ...query, type: "operation.status",
+    snapshot: { state: "completed", completedAt: 1, cancelRequested: false,
+      outcome: "success", payload: { status: "expired" } },
+  }, f.socket as never);
+  await expect(lookup).resolves.toMatchObject({
+    operationId: call.requestId, phase: "completed", outcome: "success",
+    resultAvailability: "expired",
+  });
+  expect(f.socket.sent.filter(m => m.type === "operation.call")).toHaveLength(1);
+  expect(f.logger.event).toHaveBeenCalledWith("operation.cleanup_failed", expect.anything());
+});
+
+it("never dispatches if authorization used the entire MCP request budget", async () => {
+  let now = 10_000;
+  const f = fixture(true, () => now);
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+  try {
+    const actor = { ...f.actor, authorize: async () => { now += 45_001; return true; } };
+    await expect(f.service.invoke(actor, f.device.id, "write_file", {}, {
+      timeoutMs: 45_000, deadlineAt: now + 45_000,
+    })).rejects.toMatchObject({ code: "REQUEST_TIMEOUT", details: {
+      dispatched: false, reason: "deadline",
+    } });
+    expect(f.socket.sent).toHaveLength(0);
+    expect(f.db.prepare("SELECT COUNT(*) AS count FROM operations").get()).toMatchObject({ count: 0 });
+  } finally { clock.mockRestore(); }
+});
+
+it("subtracts authorization time from the broker waiter without replaying any operation", async () => {
+  let now = 10_000;
+  const f = fixture(true, () => now);
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+  try {
+    let checks = 0;
+    const actor = { ...f.actor, authorize: async () => { if (++checks === 1) now += 10_000; return true; } };
+    let waited: number | undefined;
+    const brokerCall = vi.spyOn(f.broker, "call").mockImplementation(async (_, __, ___, options) => {
+      waited = options.timeoutMs;
+      return f.response(options.requestId!);
+    });
+    const result = await f.service.invoke(actor, f.device.id, "write_file", {}, {
+      timeoutMs: 45_000, deadlineAt: now + 45_000,
+    });
+    expect(waited).toBe(35_000);
+    expect(brokerCall).toHaveBeenCalledTimes(1);
+    expect(result.type).toBe("tool.result");
+  } finally { clock.mockRestore(); }
+});
+
+it("preserves a recoverable operation ID through the MCP SDK after waiter timeout without redispatch", async () => {
+  const f = fixture();
+  const server = buildMcpServer({
+    devices: f.devices,
+    authOwnerId: () => f.actor.userId,
+    registry: f.registry,
+    broker: f.broker,
+    operations: f.service,
+    operationActor: () => f.actor,
+    logger: f.logger,
+    toolTimeoutMs: 25,
+  });
+  const client = new Client({ name: "timeout-recovery-qa", version: "0.0.0" });
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverSide);
+  await client.connect(clientSide);
+  try {
+    const pending = client.callTool({ name: "read_file", arguments: {
+      deviceId: f.device.id, path: "/no-execution",
+    } });
+    await vi.waitFor(() => expect(f.socket.sent.some(m => m.type === "operation.call")).toBe(true));
+    const original = f.socket.sent.find(m => m.type === "operation.call")!;
+    const result = await pending;
+    const timeout = (result.structuredContent as {
+      error?: { code: string; details?: { operationId: string; recovery: boolean } };
+    } | undefined)?.error;
+    expect(timeout).toMatchObject({
+      code: "REQUEST_TIMEOUT",
+      details: { operationId: original.requestId, recovery: true },
+    });
+    expect(f.repository.find(original.requestId)).toMatchObject({ phase: "unknown" });
+
+    // The Agent's terminal observation arrives after the original MCP waiter expired.
+    f.broker.handleMessage(f.response(original.requestId), f.socket as never);
+    expect(f.repository.find(original.requestId)).toMatchObject({
+      phase: "completed", outcome: "success",
+    });
+    const query = client.callTool({ name: "odr_get_operation", arguments: {
+      operationId: original.requestId,
+    } });
+    await vi.waitFor(() => expect(f.socket.sent.some(m => m.type === "operation.query")).toBe(true));
+    const frame = f.socket.sent.find(m => m.type === "operation.query")!;
+    f.broker.handleStatus({
+      type: "operation.status", protocolVersion: 1, deviceId: f.device.id,
+      requestId: original.requestId, queryId: frame.queryId, bootId: frame.bootId,
+      snapshot: { state: "completed", completedAt: Date.now(),
+        cancelRequested: false, outcome: "success",
+        payload: { status: "available", response: f.response(original.requestId) } },
+    }, f.socket as never);
+    const recovered = await query;
+    const operation = (recovered.structuredContent as {
+      operation?: { operationId: string; resultAvailability: string; phase: string };
+    } | undefined)?.operation;
+    expect(operation).toMatchObject({
+      operationId: original.requestId,
+      phase: "completed", resultAvailability: "available",
+    });
+    expect(f.socket.sent.filter(m => m.type === "operation.call")).toHaveLength(1);
+  } finally {
+    await client.close();
+    await server.close();
+  }
 });

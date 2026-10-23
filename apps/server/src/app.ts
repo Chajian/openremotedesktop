@@ -28,7 +28,7 @@ import { OperationRepository } from "./operations/operation-repository.js";
 import { OperationService } from "./operations/operation-service.js";
 import { OwnedOperationAccessPolicy } from "./operations/access-policy.js";
 import { createOperationActor } from "./mcp/operation-actor.js";
-import { createServerLogger } from "./logging.js";
+import { createServerLogger, logMaintenanceFailure } from "./logging.js";
 
 export type AppDependencies = {
   db: BetterSqlite3.Database;
@@ -76,8 +76,15 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
   const logger = createServerLogger();
   const operationRepository = new OperationRepository(deps.db);
   const operations = new OperationService(operationRepository, broker, new OwnedOperationAccessPolicy(devices), {logger});
+  // Startup still fails fast on an unusable database. Periodic pruning must not.
   operationRepository.cleanup();
-  const operationCleanup = setInterval(() => operationRepository.cleanup(), 60_000);
+  const operationCleanup = setInterval(() => {
+    try {
+      operationRepository.cleanup();
+    } catch (error) {
+      logMaintenanceFailure(logger, "operation.cleanup_failed", error);
+    }
+  }, 60_000);
   operationCleanup.unref();
   app.addHook("onClose", async () => clearInterval(operationCleanup));
 

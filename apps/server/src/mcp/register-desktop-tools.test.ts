@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { Client } from "@modelcontextprotocol/client";
+import { Client, DEFAULT_REQUEST_TIMEOUT_MSEC } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { OperationQueryResult } from "../operations/operation-service.js";
 import type { Device } from "../devices/device-repository.js";
 import { buildMcpServer } from "./mcp-handler.js";
@@ -22,7 +22,12 @@ const device: Device = {
 const foreignDeviceId = "22222222-2222-4222-8222-222222222222";
 const foreignDevice: Device = { ...device, id: foreignDeviceId, name: "Foreign PC", ownerId: "foreign-test" };
 
-async function fixture(nestedError = false, operation?: OperationQueryResult) {
+async function fixture(
+  nestedError = false,
+  operation?: OperationQueryResult,
+  toolTimeoutMs?: number,
+  onRoute?: () => void,
+) {
   const logs: Array<{ event: string; metadata: Record<string, unknown> }> = [];
   const calls: Array<{
     deviceId: string;
@@ -32,6 +37,7 @@ async function fixture(nestedError = false, operation?: OperationQueryResult) {
   }> = [];
 
   const server = buildMcpServer({
+    ...(toolTimeoutMs === undefined ? {} : { toolTimeoutMs }),
     ...(operation ? {
       operationActor: () => ({ userId: "owner-test", clientId: "test-client", authorize: async () => true }),
       operations: {
@@ -40,7 +46,10 @@ async function fixture(nestedError = false, operation?: OperationQueryResult) {
       },
     } : {}),
     devices: {
-      listOwnedDevices: (ownerId: string) => [device, foreignDevice].filter(d => d.ownerId === ownerId),
+      listOwnedDevices: (ownerId: string) => {
+        onRoute?.();
+        return [device, foreignDevice].filter(d => d.ownerId === ownerId);
+      },
     },
     authOwnerId: () => "owner-test",
     registry: {
@@ -222,4 +231,45 @@ it("returns recovered payload only in structured content and useful metadata in 
   } finally {
     await f.close();
   }
+});
+
+it("reserves headroom before the MCP client's default timeout for every tool call", async () => {
+  expect(DEFAULT_REQUEST_TIMEOUT_MSEC).toBeGreaterThan(10_000);
+  for (const configured of [undefined, 120_000]) {
+    const f = await fixture(false, undefined, configured);
+    try {
+      const result = await f.client.callTool({ name: "get_config", arguments: { deviceId } });
+      expect(result.isError).not.toBe(true);
+      expect(f.calls).toHaveLength(1);
+      expect(f.calls[0]!.timeoutMs).toBeGreaterThan(0);
+      expect(f.calls[0]!.timeoutMs).toBeLessThanOrEqual(DEFAULT_REQUEST_TIMEOUT_MSEC - 10_000);
+    } finally { await f.close(); }
+  }
+});
+
+it("includes routing latency in the MCP waiter budget and never dispatches past its deadline", async () => {
+  let now = 10_000;
+  const shortened = await fixture(false, undefined, undefined, () => { now += 7_000; });
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+  try {
+    const result = await shortened.client.callTool({ name: "get_config", arguments: { deviceId } });
+    expect(result.isError).not.toBe(true);
+    expect(shortened.calls).toHaveLength(1);
+    expect(shortened.calls[0]!.timeoutMs).toBe(38_000);
+  } finally { clock.mockRestore(); await shortened.close(); }
+
+  now = 10_000;
+  const exhausted = await fixture(false, undefined, undefined, () => { now += 46_000; });
+  const clock2 = vi.spyOn(Date, "now").mockImplementation(() => now);
+  try {
+    const result = await exhausted.client.callTool({ name: "get_config", arguments: { deviceId } });
+    const error = (result.structuredContent as {
+      error?: { code: string; details?: Record<string, unknown> };
+    } | undefined)?.error;
+    expect(error).toMatchObject({
+      code: "REQUEST_TIMEOUT", details: { dispatched: false, reason: "deadline" },
+    });
+    expect(error?.details).not.toHaveProperty("operationId");
+    expect(exhausted.calls).toHaveLength(0);
+  } finally { clock2.mockRestore(); await exhausted.close(); }
 });

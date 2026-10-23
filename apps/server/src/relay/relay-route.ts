@@ -11,7 +11,7 @@ import {
   type DeviceAuthService,
   type DevicePrincipal,
 } from "../devices/device-auth.js";
-import type { ServerLogger } from "../logging.js";
+import { logMaintenanceFailure, type ServerLogger } from "../logging.js";
 import type { DeviceRepository } from "../devices/device-repository.js";
 import { ConnectionRegistry } from "./connection-registry.js";
 import { HEARTBEAT_INTERVAL_MS } from "./heartbeat.js";
@@ -162,10 +162,13 @@ export function registerRelayRoute(
   registries.set(app, registry);
   brokers.set(app, broker);
 
-  const sweepTimer = setInterval(
-    () => registry.sweepStale(),
-    HEARTBEAT_INTERVAL_MS,
-  );
+  const sweepTimer = setInterval(() => {
+    try {
+      registry.sweepStale();
+    } catch (error) {
+      logMaintenanceFailure(logger, "relay.sweep_failed", error);
+    }
+  }, HEARTBEAT_INTERVAL_MS);
   sweepTimer.unref();
   app.addHook("onClose", async () => clearInterval(sweepTimer));
 

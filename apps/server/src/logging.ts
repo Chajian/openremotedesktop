@@ -53,3 +53,22 @@ export function createServerLogger(
     },
   };
 }
+
+/** Maintenance runs opportunistically: reporting failures must never crash a request or timer. */
+export function logMaintenanceFailure(
+  logger: Pick<ServerLogger, "event"> | undefined,
+  event: "operation.cleanup_failed" | "relay.sweep_failed",
+  error: unknown,
+): void {
+  // Report only recognized machine-readable SQLite codes, never raw SQL,
+  // exception messages, operation arguments or potentially sensitive paths.
+  try {
+    const candidate = error !== null && typeof error === "object" && "code" in error
+      ? error.code : undefined;
+    const code = typeof candidate === "string" && /^SQLITE_[A-Z0-9_]{1,40}$/.test(candidate)
+      ? candidate : undefined;
+    logger?.event(event, code ? { code } : {});
+  } catch {
+    // Even the logging sink can fail; maintenance must not become fatal.
+  }
+}

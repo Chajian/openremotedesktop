@@ -118,9 +118,12 @@ Verify HTTPS/WSS reachability, reverse-proxy support for WebSocket upgrades, sys
 ### `EXECUTION_UNKNOWN`
 
 The result could not be confirmed after dispatch. The error includes an
-`operationId`. When `recovery` is true, use `odr_get_operation` from the same
-authorized MCP client with that ID; this reads the existing operation and never
-repeats the tool call. `includeResult: false` requests metadata only.
+`operationId`. A dispatched `REQUEST_TIMEOUT` with an operation ID is also
+ambiguous: the Server ends its waiter after at most 45 seconds (below the MCP
+SDK client's 60-second default), but the Agent's command can still be running.
+When `recovery` is true, use `odr_get_operation` from the same authorized MCP
+client with that ID; this reads the existing operation and never repeats the
+tool call. `includeResult: false` requests metadata only.
 
 Keep the Agent process alive while recovering. Its process identity and result
 cache survive relay reconnects; an Agent restart cannot recover old result bodies.
