@@ -1,0 +1,7 @@
+# Gitleaks false positives from the pinned, public Desktop Commander 0.2.52
+# SHA-256 file-integrity manifest (NOT credentials).
+# Only these two historical findings are ignored: exact commit + path + rule + line.
+# Do not allowlist the manifest path, a whole commit or the generic-api-key rule.
+# Any new finding, including one on another line or in a later commit, must fail.
+01954cc9a03067a548cdb5789aa5e0b48784f044:scripts/upstream-desktop-commander-0.2.52.json:generic-api-key:50
+01954cc9a03067a548cdb5789aa5e0b48784f044:scripts/upstream-desktop-commander-0.2.52.json:generic-api-key:51
