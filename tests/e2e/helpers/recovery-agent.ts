@@ -14,6 +14,7 @@ export function barrier() {
 export function startRecoveryAgent(
   credential: DeviceCredential,
   startClient: () => Promise<ExecutorClient>,
+  options: { stalledOperationTimeoutMs?: number } = {},
 ) {
   const reconnect = barrier();
   const executor = new ExecutorManager({ startClient });
@@ -26,6 +27,7 @@ export function startRecoveryAgent(
     credential,
     executor,
     heartbeatIntervalMs: 250,
+    stalledOperationTimeoutMs: options.stalledOperationTimeoutMs,
     socketFactory: async (url, accessToken) => {
       if (connections > 0) await reconnect.promise;
       return new Promise((resolve, reject) => {

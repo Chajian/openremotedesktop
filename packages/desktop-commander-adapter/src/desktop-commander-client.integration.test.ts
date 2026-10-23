@@ -58,4 +58,13 @@ describe("Desktop Commander stdio compatibility", () => {
     },
     45_000,
   );
+
+  it("confirms the owned Desktop Commander subprocess is gone before close resolves", async () => {
+    const client = await DesktopCommanderClient.start();
+    const transport = Reflect.get(client, "transport") as { pid: number | null };
+    const pid = transport.pid;
+    expect(pid).toBeGreaterThan(0);
+    await client.close();
+    expect(() => process.kill(pid!, 0)).toThrow();
+  }, 45_000);
 });

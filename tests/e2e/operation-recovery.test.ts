@@ -145,6 +145,58 @@ describe("operation recovery over real MCP and WebSocket transports", () => {
     });
   }
 
+  it("keeps the real Server non-ready until a stalled executor has closed", async () => {
+    const server = await startTestServer();
+    cleanups.push(() => server.close());
+    const cookie = await server.bootstrapAndLogin();
+    const token = await server.issueMcpAccessToken(cookie);
+    const credential = await server.pairDevice(cookie, "Stalled Executor Test");
+    const closeOld = barrier();
+    let starts = 0;
+    let executions = 0;
+    const agent = startRecoveryAgent(credential, async () => {
+      const generation = ++starts;
+      return {
+        listTools: async () => [{ name: "read_file" }],
+        callTool: async () => {
+          executions++;
+          if (generation === 1) return new Promise(() => undefined);
+          return { content: [{ type: "text", text: "recovered" }] };
+        },
+        close: async () => { if (generation === 1) await closeOld.promise; },
+      };
+    }, { stalledOperationTimeoutMs: 40 });
+    cleanups.push(async () => { closeOld.release(); await agent.stop(); });
+    const client = await connectMcpClient(server.baseUrl, token);
+    cleanups.push(() => client.close());
+    await waitFor(() => server.relayRegistry.get(credential.deviceId)?.state === "READY");
+    await waitFor(() => Boolean(server.relayRegistry.get(credential.deviceId)?.bootId));
+
+    const first = client.callTool({ name: "read_file", arguments: {
+      deviceId: credential.deviceId, path: "/not-used",
+    } });
+    await waitFor(() => server.relayRegistry.get(credential.deviceId)?.state === "EXECUTOR_FAILED");
+    expect(starts).toBe(1);
+    expect(executions).toBe(1);
+    const unknown = await first;
+    expect(unknown.structuredContent?.error).toMatchObject({ code: "EXECUTION_UNKNOWN" });
+    const refused = await client.callTool({ name: "read_file", arguments: {
+      deviceId: credential.deviceId, path: "/not-used",
+    } });
+    expect(refused.structuredContent?.error).toMatchObject({ code: "DEVICE_NOT_READY" });
+    expect(executions).toBe(1);
+
+    closeOld.release();
+    await waitFor(() => server.relayRegistry.get(credential.deviceId)?.state === "READY");
+    expect(starts).toBe(2);
+    const recovered = await client.callTool({ name: "read_file", arguments: {
+      deviceId: credential.deviceId, path: "/not-used",
+    } });
+    expect(recovered.content).toEqual([{ type: "text", text: "recovered" }]);
+    expect(executions).toBe(2);
+    expect(agent.failure).toBeUndefined();
+  });
+
   it("keeps an old Agent on legacy calls and reports the recovery limitation", async () => {
     const server = await startTestServer();
     cleanups.push(() => server.close());

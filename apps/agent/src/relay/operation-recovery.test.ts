@@ -379,3 +379,74 @@ it("restarts a stalled local executor, announces states and keeps old operation 
   expect(calls).toBe(1);
   socket.close(); await pending;
 });
+
+it("keeps Relay non-ready when a stalled executor cannot confirm shutdown", async () => {
+  let starts = 0;
+  let calls = 0;
+  const executor = new ExecutorManager({ startClient: async () => {
+    starts++;
+    return {
+      listTools: async () => [{ name: "write_file" }],
+      callTool: async () => { calls++; return new Promise(() => undefined); },
+      close: async () => { throw new Error("process may still be alive"); },
+    };
+  } });
+  await executor.start();
+  const socket = new Socket();
+  const relay = new RelayClient({ credential, executor, heartbeatIntervalMs: 0,
+    stalledOperationTimeoutMs: 20, now: () => 1_000,
+    refreshToken: async () => ({ accessToken: "test", expiresAt: 999999, deviceId }),
+    socketFactory: async () => socket,
+  });
+  const pending = relay.connectOnce(new AbortController().signal);
+  await vi.waitFor(() => expect(socket.sent.some(m => m.type === "agent.ready")).toBe(true));
+  socket.receive(notice);
+  const requestId = randomUUID();
+  socket.receive({ type: "operation.call", protocolVersion: 1, deviceId, bootId: relay.bootId,
+    requestId, toolName: "write_file", arguments: {}, expiresAt: 61_000 });
+  await vi.waitFor(() => expect(socket.sent.some(m => m.type === "tool.error" && m.requestId === requestId)).toBe(true));
+  expect(executor.state()).toBe("EXECUTOR_FAILED");
+  expect(starts).toBe(1);
+  expect(calls).toBe(1);
+  expect(socket.sent.filter(m => m.type === "agent.ready")).toHaveLength(1);
+  const states = socket.sent.filter(m => m.type === "agent.executor_status").map(m => m.state);
+  expect(states).toContain("EXECUTOR_FAILED");
+  expect(states).not.toContain("EXECUTOR_STARTING");
+  socket.close(); await pending;
+});
+
+it("reports STARTING only after a stalled executor closes, then reports READY", async () => {
+  let releaseClose!: () => void;
+  let starts = 0;
+  const executor = new ExecutorManager({ startClient: async () => {
+    starts++;
+    return {
+      listTools: async () => [{ name: "read_file" }],
+      callTool: async () => new Promise(() => undefined),
+      close: async () => { if (starts === 1) await new Promise<void>(done => { releaseClose = done; }); },
+    };
+  } });
+  await executor.start();
+  const socket = new Socket();
+  const relay = new RelayClient({ credential, executor, heartbeatIntervalMs: 0,
+    stalledOperationTimeoutMs: 20, now: () => 1_000,
+    refreshToken: async () => ({ accessToken: "test", expiresAt: 999999, deviceId }),
+    socketFactory: async () => socket,
+  });
+  const pending = relay.connectOnce(new AbortController().signal);
+  await vi.waitFor(() => expect(socket.sent.some(m => m.type === "agent.ready")).toBe(true));
+  socket.receive(notice);
+  socket.receive({ type: "operation.call", protocolVersion: 1, deviceId, bootId: relay.bootId,
+    requestId: randomUUID(), toolName: "read_file", arguments: {}, expiresAt: 61_000 });
+  await vi.waitFor(() => expect(socket.sent.some(m =>
+    m.type === "agent.executor_status" && m.state === "EXECUTOR_FAILED")).toBe(true));
+  const statuses = () => socket.sent.filter(m => m.type === "agent.executor_status").map(m => m.state);
+  expect(statuses()).toEqual(["EXECUTOR_FAILED"]);
+  expect(starts).toBe(1);
+  releaseClose();
+  await vi.waitFor(() => expect(starts).toBe(2));
+  expect(statuses()).toEqual(["EXECUTOR_FAILED", "EXECUTOR_STARTING"]);
+  await vi.waitFor(() => expect(socket.sent.filter(m => m.type === "agent.ready")).toHaveLength(2));
+  expect(executor.state()).toBe("READY");
+  socket.close(); await pending;
+});
