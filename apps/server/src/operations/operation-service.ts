@@ -164,6 +164,7 @@ export class OperationService {
       return result;
     } catch (error) {
       if (error instanceof PreDispatchRejectedError) {
+        if (!record.bootId) this.legacySockets.get(connection.socket)?.delete(operationId);
         this.repository.discardNotDispatched(operationId);
         if (!await this.policy.allows(actor, deviceId, record)) {
           throw new RelayRequestError("DEVICE_NOT_FOUND", "Requested device was not found");
