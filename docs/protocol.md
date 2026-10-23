@@ -173,6 +173,30 @@ disconnect ends the original waiter but leaves the operation ID usable for a
 later query. Late valid terminal evidence is retained; contradictory terminal
 responses are marked as conflicts and their bodies are withheld.
 
+The MCP SDK client's default request timeout is **60 seconds**. The Server caps
+the original tool-call **waiter** at **45 seconds**, counting tool routing
+and operation-policy authorization after the handler begins. This reserves up
+to 15 seconds for the initial HTTP auth, response delivery and other overhead
+under the SDK's default deadline. A configured longer waiter is capped to the
+same limit. If this budget is exhausted before any dispatch, the Server rejects with
+`REQUEST_TIMEOUT`, `details.dispatched: false`, and no operation ID.
+After dispatch, a waiter timeout retains `details.operationId` for read-only
+recovery. A shorter Server waiter does **not** cancel or retry the local effect.
+The Agent's default 10-minute stalled-executor watchdog is separate from both
+this waiter and the 60-second **submission admission** expiry described above.
+Other clients and reverse proxies with shorter request timeouts may still need
+their own configuration.
+
+Background metadata pruning (once per minute) and the stale-heartbeat sweep
+are best-effort: exceptions emit `operation.cleanup_failed` or
+`relay.sweep_failed` without escaping the timer or preventing later ticks.
+Opportunistic pruning failure also does not block authorized dispatch or a
+read-only query. Genuine operation create/read/update database errors still
+surface normally; this is not a blanket SQLite-error suppression. During a
+stale sweep, a socket that fails to terminate is retained for a later attempt,
+while other stale sockets continue to be processed. Failure telemetry includes
+only approved machine-readable codes, not raw SQL or local paths.
+
 Cancellation records a request to stop, independently of actual completion.
 It does not erase a successful outcome or promise rollback. An executor exception,
 serialization failure or oversized response can leave execution unknown even if

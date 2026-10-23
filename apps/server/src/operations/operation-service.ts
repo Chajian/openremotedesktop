@@ -6,7 +6,7 @@ import type {
   OperationStatusMessage,
 } from "@open-desktop-remote/protocol";
 import type { WebSocket } from "ws";
-import type { ServerLogger } from "../logging.js";
+import { logMaintenanceFailure, type ServerLogger } from "../logging.js";
 import type { LiveDeviceConnection } from "../relay/connection-registry.js";
 import { PreDispatchRejectedError, RelayRequestError, type RequestBroker } from "../relay/request-broker.js";
 import type { OperationAccessPolicy, OperationActor } from "./access-policy.js";
@@ -83,6 +83,14 @@ export class OperationService {
     }
   }
 
+  private cleanupExpired(): void {
+    try {
+      this.repository.cleanup(this.now());
+    } catch (error) {
+      logMaintenanceFailure(this.options.logger, "operation.cleanup_failed", error);
+    }
+  }
+
   private pruneLegacy(socket: WebSocket): Map<string, number> | undefined {
     const ids = this.legacySockets.get(socket);
     if (ids) {
@@ -118,9 +126,9 @@ export class OperationService {
     deviceId: string,
     toolName: string,
     args: unknown,
-    options: { timeoutMs: number },
+    options: { timeoutMs: number; deadlineAt?: number },
   ): Promise<ToolResultMessage> {
-    this.repository.cleanup(this.now());
+    this.cleanupExpired();
     if (!await this.policy.allows(actor, deviceId)) {
       throw new RelayRequestError("DEVICE_NOT_FOUND", "Requested device was not found");
     }
@@ -128,6 +136,12 @@ export class OperationService {
     if (!connection) throw new RelayRequestError("DEVICE_OFFLINE", "Device is offline");
     if (connection.state !== "READY") {
       throw new RelayRequestError("DEVICE_NOT_READY", "Device is not READY");
+    }
+
+    // A slow authorization check must not dispatch after the caller's
+    // bounded MCP response window has already elapsed.
+    if (options.deadlineAt !== undefined && Date.now() >= options.deadlineAt) {
+      throw new PreDispatchRejectedError("REQUEST_TIMEOUT", "Tool request deadline elapsed before dispatch", { reason: "deadline" });
     }
 
     const operationId = randomUUID();
@@ -152,8 +166,14 @@ export class OperationService {
       ids.set(operationId, record.retentionUntil);
     }
     try {
+      const remaining = options.deadlineAt === undefined
+        ? options.timeoutMs
+        : Math.min(options.timeoutMs, options.deadlineAt - Date.now());
+      if (remaining <= 0) {
+        throw new PreDispatchRejectedError("REQUEST_TIMEOUT", "Tool request deadline elapsed before dispatch", { reason: "deadline" });
+      }
       const result = await this.broker.call(deviceId, toolName, args, {
-        timeoutMs: options.timeoutMs,
+        timeoutMs: remaining,
         requestId: operationId,
         connection,
         onDispatched: () => this.options.logger?.event("operation.dispatch", {
@@ -204,7 +224,7 @@ export class OperationService {
     operationId: string,
     includeResult = true,
   ): Promise<OperationQueryResult> {
-    this.repository.cleanup(this.now());
+    this.cleanupExpired();
     const record = this.repository.find(operationId);
     if (!record || !await this.policy.allows(actor, record.deviceId, record)) {
       return { state: "not_found" };

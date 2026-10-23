@@ -285,3 +285,18 @@ it("accepts an executor watchdog replacement without severing the authenticated 
   expect(registry.get(device.id)?.state).toBe("READY");
   expect(socket.closeCalls).toHaveLength(0);
 });
+
+it("does not let one broken socket starve cleanup of other stale connections", () => {
+  const { registry, devices, device, advance } = fixture();
+  const bad = new FakeSocket();
+  bad.terminate = () => { throw new Error("socket termination failed"); };
+  const other = devices.create("Second device", "test-owner");
+  const healthy = new FakeSocket();
+  registry.attach(device.id, bad as never);
+  registry.attach(other.id, healthy as never);
+  advance(45_001);
+  expect(() => registry.expireStale(45_000)).toThrow("socket termination failed");
+  expect(healthy.terminated).toBe(true);
+  expect(registry.get(other.id)).toBeUndefined();
+  expect(registry.get(device.id)).toBeDefined();
+});

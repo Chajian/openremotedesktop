@@ -90,13 +90,24 @@ export class ConnectionRegistry {
   expireStale(staleMs = HEARTBEAT_STALE_MS): string[] {
     const now = this.now();
     const expired: string[] = [];
+    let firstFailure: unknown;
+    let terminationFailed = false;
     for (const [deviceId, connection] of this.connections) {
       if (now - connection.lastHeartbeatAt > staleMs) {
-        connection.socket.terminate();
+        try {
+          connection.socket.terminate();
+        } catch (error) {
+          // Keep the unconfirmed connection registered for another attempt,
+          // but do not let it prevent other expired devices from being swept.
+          if (!terminationFailed) firstFailure = error;
+          terminationFailed = true;
+          continue;
+        }
         this.connections.delete(deviceId);
         expired.push(deviceId);
       }
     }
+    if (terminationFailed) throw firstFailure;
     return expired;
   }
 

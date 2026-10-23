@@ -15,6 +15,7 @@ import type { DeviceRepository } from "../devices/device-repository.js";
 import type { ServerLogger } from "../logging.js";
 import type { ConnectionRegistry } from "../relay/connection-registry.js";
 import {
+  PreDispatchRejectedError,
   RelayRequestError,
   type RequestBroker,
 } from "../relay/request-broker.js";
@@ -31,7 +32,14 @@ export type DesktopToolDependencies = {
   toolTimeoutMs?: number;
 };
 
-const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
+// The MCP SDK client defaults to a 60s request deadline. Leave headroom
+// for routing, authentication, final authorization and HTTP response delivery.
+// This limits the Server's waiter, NOT the duration of an already-running Agent tool.
+const MAX_TOOL_WAITER_TIMEOUT_MS = 45_000;
+
+function waiterTimeoutMs(requested?: number): number {
+  return Math.min(requested ?? MAX_TOOL_WAITER_TIMEOUT_MS, MAX_TOOL_WAITER_TIMEOUT_MS);
+}
 
 function errorCode(error: unknown): string {
   return error instanceof DeviceRoutingError || error instanceof RelayRequestError
@@ -106,6 +114,7 @@ export function registerDesktopCommanderTools(
         const ownerId = deps.authOwnerId(extra.http?.authInfo);
         if (!ownerId) return errorResult(new Error("Missing authenticated account"));
         const startedAt = Date.now();
+        const deadlineAt = startedAt + waiterTimeoutMs(deps.toolTimeoutMs);
         const { deviceId, forwarded } = splitRoutingArguments(args);
         let targetDeviceId = deviceId;
         try {
@@ -116,11 +125,15 @@ export function registerDesktopCommanderTools(
           );
           const actor = deps.operationActor?.(extra.http?.authInfo);
           if (deps.operations && !actor) throw new Error("Missing authenticated account");
+          const remaining = deadlineAt - Date.now();
+          if (remaining <= 0) {
+            throw new PreDispatchRejectedError("REQUEST_TIMEOUT", "Tool request deadline elapsed before dispatch", { reason: "deadline" });
+          }
           const relayResult = deps.operations && actor
             ? await deps.operations.invoke(actor, targetDeviceId, tool.name, forwarded,
-                {timeoutMs: deps.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS})
+                { timeoutMs: remaining, deadlineAt })
             : await deps.broker.call(targetDeviceId, tool.name, forwarded,
-                {timeoutMs: deps.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS});
+                { timeoutMs: remaining });
           deps.logger?.event("tool.call", {
             requestId: relayResult.requestId,
             deviceId: targetDeviceId,
