@@ -9,10 +9,10 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const defaultRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const published = JSON.parse(readFileSync(new URL("./upstream-desktop-commander-0.2.52.json", import.meta.url), "utf8"));
+const published = JSON.parse(readFileSync(new URL("./upstream-desktop-commander-0.3.1.json", import.meta.url), "utf8"));
 const upstream = "@wonderwhy-er/desktop-commander";
-const version = "0.2.52";
-const integrity = "sha512-VNeKfaBR6TN/8MlP/ziTpjNEeHrGOFmmzQjrwzr52kQalBJoNNISWwaSQElPFc6+I17NOOM354KbSdS/aDrqGA==";
+const version = "0.3.1";
+const integrity = "sha512-cx7KTscLF951adHmDLVCDIVTqJ/Bg1LtdRILZoo5wa/UMeyOfMAuOJOEBulNMKBKb5Xd3nHDQnB9aXroN9Fw5A==";
 const launcher = "packages/desktop-commander-adapter/src/desktop-commander-client.ts";
 const resolutionFiles = new Set([launcher, "scripts/smoke-packaged-agent.mjs"]);
 const ignoredDirectories = new Set(["node_modules", "dist", "build", "coverage", ".git", ".superpowers", "__fixtures__", "fixtures", "__tests__"]);
@@ -60,8 +60,11 @@ function checkLock(text, errors) {
   const adapter = importers === undefined ? undefined : block(importers, "packages/desktop-commander-adapter", 2);
   const dependencies = adapter === undefined ? undefined : block(adapter, "dependencies", 4);
   const dependency = dependencies === undefined ? undefined : block(dependencies, upstream, 6);
-  if (scalar(dependency, "specifier", 8) !== version || scalar(dependency, "version", 8) !== version) {
-    errors.push("pnpm-lock.yaml: lockfile adapter specifier/version must be exactly 0.2.52.");
+  // pnpm may append the resolved optional Node-types peer context. It does
+  // not change the artifact identity; reject every other suffix or source.
+  const lockedVersion = scalar(dependency, "version", 8)?.replace(/\(@types\/node@\d+\.\d+\.\d+\)$/, "");
+  if (scalar(dependency, "specifier", 8) !== version || lockedVersion !== version) {
+    errors.push("pnpm-lock.yaml: lockfile adapter must pin exactly 0.3.1, with only an optional Node-types peer context.");
   }
   const packages = block(text, "packages", 0);
   const record = packages === undefined ? undefined : block(packages, `${upstream}@${version}`, 2);
@@ -84,7 +87,7 @@ function checkManifest(manifest, path, errors) {
   for (const field of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
     for (const [name, specifier] of Object.entries(manifest[field] ?? {})) {
       if ((name === upstream || String(specifier).includes(upstream)) && (name !== upstream || specifier !== version)) {
-        errors.push(`${path}: upstream dependency must use the exact original 0.2.52 npm source.`);
+        errors.push(`${path}: upstream dependency must use the exact original 0.3.1 npm source.`);
       }
     }
   }
@@ -179,7 +182,7 @@ export function checkInstalledPackage({ installedPackagePath, baseline = publish
 export function checkUpstreamBoundary({ root = defaultRoot, installedPackagePath, sourceOnly = false } = {}) {
   root = resolve(root);
   const errors = [];
-  if (published.package !== upstream || published.version !== version || published.integrity !== integrity || published.algorithm !== "sha256" || Object.keys(published.files).length !== 249) {
+  if (published.package !== upstream || published.version !== version || published.integrity !== integrity || published.algorithm !== "sha256" || Object.keys(published.files).length !== 292) {
     errors.push("Published upstream hash baseline identity is invalid.");
   }
   try {
@@ -187,7 +190,7 @@ export function checkUpstreamBoundary({ root = defaultRoot, installedPackagePath
     for (const folder of ["apps", "packages"]) walk(join(root, folder), (path) => { if (basename(path) === "package.json") manifests.push(path); });
     for (const path of manifests) checkManifest(JSON.parse(readFileSync(path, "utf8")), slash(relative(root, path)), errors);
     const adapter = JSON.parse(readFileSync(join(root, "packages/desktop-commander-adapter/package.json"), "utf8"));
-    if (adapter.dependencies?.[upstream] !== version) errors.push("Adapter must pin upstream to exact original 0.2.52 npm source.");
+    if (adapter.dependencies?.[upstream] !== version) errors.push("Adapter must pin upstream to exact original 0.3.1 npm source.");
     checkLock(readFileSync(join(root, "pnpm-lock.yaml"), "utf8"), errors);
     const workspace = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8");
     if (/^\s*['"]?(?:pnpmfile|globalPnpmfile)['"]?\s*:/m.test(workspace)) {

@@ -10,9 +10,9 @@ import { checkInstalledPackage, checkUpstreamBoundary } from "./check-upstream-b
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const upstream = "@wonderwhy-er/desktop-commander";
-const baseline = JSON.parse(readFileSync(join(root, "scripts/upstream-desktop-commander-0.2.52.json"), "utf8"));
+const baseline = JSON.parse(readFileSync(join(root, "scripts/upstream-desktop-commander-0.3.1.json"), "utf8"));
 const launcher = "packages/desktop-commander-adapter/src/desktop-commander-client.ts";
-const lock = `lockfileVersion: '9.0'\nimporters:\n  packages/desktop-commander-adapter:\n    dependencies:\n      '${upstream}':\n        specifier: 0.2.52\n        version: 0.2.52\npackages:\n  '${upstream}@0.2.52':\n    resolution: {integrity: ${baseline.integrity}}\nsnapshots:\n  '${upstream}@0.2.52': {}\n`;
+const lock = `lockfileVersion: '9.0'\nimporters:\n  packages/desktop-commander-adapter:\n    dependencies:\n      '${upstream}':\n        specifier: 0.3.1\n        version: 0.3.1\npackages:\n  '${upstream}@0.3.1':\n    resolution: {integrity: ${baseline.integrity}}\nsnapshots:\n  '${upstream}@0.3.1': {}\n`;
 function write(dir, name, content) {
   mkdirSync(dirname(join(dir, name)), { recursive: true });
   writeFileSync(join(dir, name), content);
@@ -21,7 +21,7 @@ function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), "upstream-boundary-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   write(dir, "package.json", JSON.stringify({ private: true, scripts: { build: "node scripts/build.mjs" } }));
-  write(dir, "packages/desktop-commander-adapter/package.json", JSON.stringify({ dependencies: { [upstream]: "0.2.52" } }));
+  write(dir, "packages/desktop-commander-adapter/package.json", JSON.stringify({ dependencies: { [upstream]: "0.3.1" } }));
   write(dir, "pnpm-workspace.yaml", 'packages:\n  - "apps/*"\n  - "packages/*"\n');
   write(dir, "pnpm-lock.yaml", lock);
   mkdirSync(dirname(join(dir, launcher)), { recursive: true });
@@ -39,21 +39,30 @@ function manifest(dir, path, value) { write(dir, path, JSON.stringify(value)); }
 test("source guard accepts pinned identity and the unchanged launcher", (t) => {
   assert.equal(check(fixture(t)).ok, true);
 });
-for (const version of ["^0.2.52", "0.2.53", "file:../fork", "npm:replacement@0.2.52", "https://example.com/commander.tgz"]) {
+for (const version of ["^0.3.1", "0.2.52", "file:../fork", "npm:replacement@0.3.1", "https://example.com/commander.tgz"]) {
   test(`rejects adapter source ${version}`, (t) => {
     const dir = fixture(t);
     manifest(dir, "packages/desktop-commander-adapter/package.json", { dependencies: { [upstream]: version } });
-    rejects(check(dir), /exact.*0\.2\.52/i);
+    rejects(check(dir), /exact.*0\.3\.1/i);
   });
 }
 test("rejects a second workspace dependency selecting an alternative source", (t) => {
   const dir = fixture(t);
   manifest(dir, "apps/example/package.json", { optionalDependencies: { [upstream]: "git+https://example.com/fork.git" } });
-  rejects(check(dir), /exact.*0\.2\.52/i);
+  rejects(check(dir), /exact.*0\.3\.1/i);
+});
+test("accepts the pinned artifact with pnpm's optional Node types peer context", (t) => {
+  const dir = fixture(t);
+  write(dir, "pnpm-lock.yaml", lock.replace("version: 0.3.1", "version: 0.3.1(@types/node@24.19.0)"));
+  assert.equal(check(dir).ok, true);
 });
 for (const [name, change] of [
-  ["lock specifier", (s) => s.replace("specifier: 0.2.52", "specifier: ^0.2.52")],
-  ["lock version", (s) => s.replace("version: 0.2.52", "version: file:../fork")],
+  ["lock patched peer context", (s) => s.replace("version: 0.3.1", "version: 0.3.1(patch_hash=changed)")],
+  ["lock alternative peer source", (s) => s.replace("version: 0.3.1", "version: 0.3.1(@types/node@file:../fork)")],
+  ["lock different version with peer context", (s) => s.replace("version: 0.3.1", "version: 0.3.10(@types/node@24.19.0)")],
+  ["lock trailing peer metadata", (s) => s.replace("version: 0.3.1", "version: 0.3.1(@types/node@24.19.0)(patch_hash=changed)")],
+  ["lock specifier", (s) => s.replace("specifier: 0.3.1", "specifier: ^0.3.1")],
+  ["lock version", (s) => s.replace("version: 0.3.1", "version: file:../fork")],
   ["lock integrity", (s) => s.replace(baseline.integrity, "sha512-invalid")],
   ["lock alternative tarball", (s) => s.replace("resolution: {integrity:", "resolution: {tarball: https://example.com/fork.tgz, integrity:")],
   ["lock alternative record", (s) => s.replace("packages:\n", `packages:\n  '${upstream}@file:../fork': {}\n`)],
@@ -64,7 +73,7 @@ for (const [name, change] of [
   });
 }
 for (const config of [
-  { pnpm: { patchedDependencies: { [`${upstream}@0.2.52`]: "patches/upstream.patch" } } },
+  { pnpm: { patchedDependencies: { [`${upstream}@0.3.1`]: "patches/upstream.patch" } } },
   { pnpm: { overrides: { [upstream]: "file:../fork" } } },
   { overrides: { [upstream]: "npm:replacement" } },
   { resolutions: { [upstream]: "file:../fork" } },
@@ -134,7 +143,7 @@ test("does not scan docs, test fixtures, dependencies or generated output as sou
 function installed(t) {
   const dir = mkdtempSync(join(tmpdir(), "upstream-installed-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const files = { "package.json": JSON.stringify({ name: upstream, version: "0.2.52", scripts: { postinstall: "node original-postinstall.js" } }), "dist/index.js": "console.log('published');\n" };
+  const files = { "package.json": JSON.stringify({ name: upstream, version: "0.3.1", scripts: { postinstall: "node original-postinstall.js" } }), "dist/index.js": "console.log('published');\n" };
   const reference = { ...baseline, files: {} };
   for (const [path, body] of Object.entries(files)) {
     write(dir, path, body); reference.files[path] = createHash("sha256").update(body).digest("hex");
@@ -182,12 +191,12 @@ test("CLI supports source-only, explicit root and actionable failure status", (t
   manifest(dir, "packages/desktop-commander-adapter/package.json", { dependencies: { [upstream]: "file:../fork" } });
   const fail = spawnSync(process.execPath, [script, "--root", dir, "--source-only"], { encoding: "utf8" });
   assert.ifError(fail.error);
-  assert.equal(fail.status, 1); assert.match(fail.stderr, /exact.*0\.2\.52/i);
+  assert.equal(fail.status, 1); assert.match(fail.stderr, /exact.*0\.3\.1/i);
 });
 
 test("rejects quoted workspace patch keys", (t) => {
   const dir = fixture(t);
-  write(dir, "pnpm-workspace.yaml", `packages:\n  - 'packages/*'\n"patchedDependencies":\n  '${upstream}@0.2.52': patches/upstream.patch\n`);
+  write(dir, "pnpm-workspace.yaml", `packages:\n  - 'packages/*'\n"patchedDependencies":\n  '${upstream}@0.3.1': patches/upstream.patch\n`);
   rejects(check(dir), /patch|replacement/i);
 });
 for (const code of [

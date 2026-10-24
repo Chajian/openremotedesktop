@@ -2,6 +2,46 @@ import { describe, expect, it } from "vitest";
 import { DesktopCommanderClient } from "./desktop-commander-client.js";
 import { DESKTOP_COMMANDER_TOOL_MANIFEST } from "@open-desktop-remote/tool-contracts";
 
+// Upstream 0.3.1 emits these two environment-dependent mount supplements.
+// Match their exact wording so unrelated description changes remain visible.
+const stableDescription = (description: string | undefined) =>
+  (description ?? "")
+    .replace(
+      /\n\n🐳 (?:CONTAINER|DOCKER|PODMAN|KUBERNETES): Verified mounts for persistent file operations: [^\n]+?\.\nFiles outside verified mounts may not persist after the container stops\./g,
+      "",
+    )
+    .replace(
+      /\n\n🐳 (?:CONTAINER|DOCKER|PODMAN|KUBERNETES): Unverified mount candidates: [^\n]+?\. These paths are inferred from common container directories and may not persist\./g,
+      "",
+    );
+
+describe("catalog path-guidance comparison", () => {
+  it.each(["CONTAINER", "DOCKER", "PODMAN", "KUBERNETES"])(
+    "ignores only %s runtime mount guidance",
+    (label) => {
+      const prefix = "Paths are automatically normalized.";
+      const suffix = " Relative paths depend on the current working directory.";
+      const verified = "\n\n🐳 " + label + ": Verified mounts for persistent file operations: /workspace, /mnt/data.\nFiles outside verified mounts may not persist after the container stops.";
+      const unverified = "\n\n🐳 " + label + ": Unverified mount candidates: /workspace/candidate. These paths are inferred from common container directories and may not persist.";
+      for (const guidance of [verified, unverified, verified + unverified]) {
+        expect(stableDescription(prefix + guidance + suffix)).toBe(prefix + suffix);
+        expect(stableDescription(prefix + guidance + suffix + " Changed guidance."))
+          .toBe(prefix + suffix + " Changed guidance.");
+      }
+    },
+  );
+
+  it("keeps changes to the fixed mount warning visible", () => {
+    const changed = [
+      "\n\n🐳 CONTAINER: Verified mounts for persistent file operations: /workspace.\nFiles outside verified mounts always persist.",
+      "\n\n🐳 CONTAINER: Unverified mount candidates: /workspace/candidate. These paths are persistent.",
+    ];
+    for (const description of changed) {
+      expect(stableDescription(description)).toBe(description);
+    }
+  });
+});
+
 describe("Desktop Commander stdio compatibility", () => {
   it(
     "matches the complete public tool catalog and calls get_config",
@@ -15,11 +55,6 @@ describe("Desktop Commander stdio compatibility", () => {
         // Compare every executable schema, plus all platform-neutral descriptions.
         // Ignore only upstream's WSL/container mount-path supplement.
         // Tool names, schemas and all other descriptions remain strict.
-        const stableDescription = (description: string | undefined) =>
-          (description ?? "").replace(
-            /\n\n🐳 CONTAINER: Prefer paths within mounted directories: [^\n]*\nWhen users ask about file locations, check these mounted paths first\. /g,
-            "",
-          );
         const contract = (tool: (typeof tools)[number]) => ({
           name: tool.name,
           description: tool.name === "start_process" ? undefined : stableDescription(tool.description),

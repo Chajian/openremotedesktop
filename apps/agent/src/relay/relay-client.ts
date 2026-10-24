@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import { DESKTOP_COMMANDER_VERSION } from "@open-desktop-remote/desktop-commander-adapter";
 import {
   PROTOCOL_VERSION,
   OPERATION_RECOVERY_CAPABILITY,
@@ -241,7 +242,7 @@ export class RelayClient {
         send(original.socket, {
           type: "agent.ready", protocolVersion: PROTOCOL_VERSION,
           deviceId: this.options.credential.deviceId,
-          desktopCommanderVersion: "0.2.52",
+          desktopCommanderVersion: DESKTOP_COMMANDER_VERSION,
           capabilities: ["desktop-commander", OPERATION_RECOVERY_CAPABILITY],
         });
       }
@@ -362,7 +363,7 @@ export class RelayClient {
           process.platform === "linux"
             ? process.platform
             : "linux",
-        desktopCommanderVersion: "0.2.52",
+        desktopCommanderVersion: DESKTOP_COMMANDER_VERSION,
         capabilities: ["desktop-commander", OPERATION_RECOVERY_CAPABILITY],
       });
 
@@ -381,7 +382,7 @@ export class RelayClient {
           type: "agent.ready",
           protocolVersion: PROTOCOL_VERSION,
           deviceId: this.options.credential.deviceId,
-          desktopCommanderVersion: "0.2.52",
+          desktopCommanderVersion: DESKTOP_COMMANDER_VERSION,
           capabilities: ["desktop-commander", OPERATION_RECOVERY_CAPABILITY],
         });
       }

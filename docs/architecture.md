@@ -32,7 +32,7 @@ Agent on each workstation
   - Desktop Commander stdio bridge
         |
         v
-Desktop Commander 0.2.52
+Desktop Commander 0.3.1
   - files
   - shell/processes
   - search
@@ -179,7 +179,7 @@ payload backup. This is not durable job execution or a network exactly-once clai
 Limits, negotiation and the MCP response contract are in [protocol](protocol.md).
 
 `pnpm upstream:check` verifies the pinned original dependency identity,
-upstream-targeted patch/deep-implementation references, and all 249 original
+upstream-targeted patch/deep-implementation references, and all 292 original
 published package files against a hash baseline derived from the
 integrity-verified npm tarball. CI repeats the installed-file check after tests
 and packaged smoke. OpenRemote's own launcher and unrelated build hooks remain
