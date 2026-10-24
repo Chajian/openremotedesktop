@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import type {
   OperationSnapshot,
   ToolErrorMessage,
@@ -126,7 +127,7 @@ export class OperationService {
     deviceId: string,
     toolName: string,
     args: unknown,
-    options: { timeoutMs: number; deadlineAt?: number },
+    options: { timeoutMs: number; deadlineAtMonotonicMs?: number },
   ): Promise<ToolResultMessage> {
     this.cleanupExpired();
     if (!await this.policy.allows(actor, deviceId)) {
@@ -140,7 +141,8 @@ export class OperationService {
 
     // A slow authorization check must not dispatch after the caller's
     // bounded MCP response window has already elapsed.
-    if (options.deadlineAt !== undefined && Date.now() >= options.deadlineAt) {
+    if (options.deadlineAtMonotonicMs !== undefined &&
+        performance.now() >= options.deadlineAtMonotonicMs) {
       throw new PreDispatchRejectedError("REQUEST_TIMEOUT", "Tool request deadline elapsed before dispatch", { reason: "deadline" });
     }
 
@@ -166,9 +168,9 @@ export class OperationService {
       ids.set(operationId, record.retentionUntil);
     }
     try {
-      const remaining = options.deadlineAt === undefined
+      const remaining = options.deadlineAtMonotonicMs === undefined
         ? options.timeoutMs
-        : Math.min(options.timeoutMs, options.deadlineAt - Date.now());
+        : Math.min(options.timeoutMs, options.deadlineAtMonotonicMs - performance.now());
       if (remaining <= 0) {
         throw new PreDispatchRejectedError("REQUEST_TIMEOUT", "Tool request deadline elapsed before dispatch", { reason: "deadline" });
       }

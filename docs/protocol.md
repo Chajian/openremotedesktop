@@ -175,9 +175,11 @@ responses are marked as conflicts and their bodies are withheld.
 
 The MCP SDK client's default request timeout is **60 seconds**. The Server caps
 the original tool-call **waiter** at **45 seconds**, counting tool routing
-and operation-policy authorization after the handler begins. This reserves up
-to 15 seconds for the initial HTTP auth, response delivery and other overhead
-under the SDK's default deadline. A configured longer waiter is capped to the
+and operation-policy authorization after the handler begins. Both layers use
+Node's monotonic `performance.now()` to track elapsed time and the shared
+deadline, so a system wall-clock adjustment cannot extend the original budget.
+This reserves up to 15 seconds for the initial HTTP auth, response delivery
+and other overhead under the SDK's default deadline. A configured longer waiter is capped to the
 same limit. If this budget is exhausted before any dispatch, the Server rejects with
 `REQUEST_TIMEOUT`, `details.dispatched: false`, and no operation ID.
 After dispatch, a waiter timeout retains `details.operationId` for read-only

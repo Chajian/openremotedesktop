@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { Client, DEFAULT_REQUEST_TIMEOUT_MSEC } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { describe, expect, it, vi } from "vitest";
@@ -250,7 +251,7 @@ it("reserves headroom before the MCP client's default timeout for every tool cal
 it("includes routing latency in the MCP waiter budget and never dispatches past its deadline", async () => {
   let now = 10_000;
   const shortened = await fixture(false, undefined, undefined, () => { now += 7_000; });
-  const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
   try {
     const result = await shortened.client.callTool({ name: "get_config", arguments: { deviceId } });
     expect(result.isError).not.toBe(true);
@@ -260,7 +261,7 @@ it("includes routing latency in the MCP waiter budget and never dispatches past 
 
   now = 10_000;
   const exhausted = await fixture(false, undefined, undefined, () => { now += 46_000; });
-  const clock2 = vi.spyOn(Date, "now").mockImplementation(() => now);
+  const clock2 = vi.spyOn(performance, "now").mockImplementation(() => now);
   try {
     const result = await exhausted.client.callTool({ name: "get_config", arguments: { deviceId } });
     const error = (result.structuredContent as {
@@ -272,4 +273,41 @@ it("includes routing latency in the MCP waiter budget and never dispatches past 
     expect(error?.details).not.toHaveProperty("operationId");
     expect(exhausted.calls).toHaveLength(0);
   } finally { clock2.mockRestore(); await exhausted.close(); }
+});
+
+it("never extends the 45-second MCP waiter when the system clock moves backwards", async () => {
+  let wall = 30_000;
+  let monotonic = 10_000;
+  const wallClock = vi.spyOn(Date, "now").mockImplementation(() => wall);
+  const monotonicClock = vi.spyOn(performance, "now").mockImplementation(() => monotonic);
+  try {
+    const first = await fixture(false, undefined, undefined, () => {
+      wall -= 90_000;
+      monotonic += 12_000;
+    });
+    try {
+      const result = await first.client.callTool({ name: "get_config", arguments: { deviceId } });
+      expect(result.isError).not.toBe(true);
+      expect(first.calls).toHaveLength(1);
+      expect(first.calls[0]!.timeoutMs).toBe(33_000);
+      expect(first.calls[0]!.timeoutMs).toBeLessThanOrEqual(45_000);
+    } finally { await first.close(); }
+
+    wall = 30_000;
+    monotonic = 10_000;
+    const second = await fixture(false, undefined, undefined, () => {
+      wall -= 120_000;
+      monotonic += 46_000;
+    });
+    try {
+      const result = await second.client.callTool({ name: "get_config", arguments: { deviceId } });
+      expect(result.structuredContent).toMatchObject({
+        error: { code: "REQUEST_TIMEOUT", details: { reason: "deadline", dispatched: false } },
+      });
+      expect(second.calls).toHaveLength(0);
+    } finally { await second.close(); }
+  } finally {
+    wallClock.mockRestore();
+    monotonicClock.mockRestore();
+  }
 });
