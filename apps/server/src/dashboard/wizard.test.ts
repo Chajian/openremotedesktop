@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderConnectPage, type WizardOptions } from "./wizard.js";
-import { installerInstructions } from "./installer.js";
+import { AGENT_INSTALL_VERSION, installerInstructions } from "./installer.js";
 
 const url = new URL("https://remote.example.com");
 function page(options: Partial<WizardOptions> = {}) {
@@ -29,7 +29,7 @@ describe("standalone Add Device wizard", () => {
       const html = page({ os, step: 2 });
       const command = installerInstructions(os, url);
       expect(html).toContain(endpoint);
-      expect(html).toContain("Agent 0.1.2");
+      expect(html).toContain(`Agent ${AGENT_INSTALL_VERSION}`);
       expect(html).toContain(command.sha256);
       expect(html).toContain('data-copy="install-command"');
       expect(html).toContain('id="install-command"');

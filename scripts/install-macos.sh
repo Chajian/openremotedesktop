@@ -2,7 +2,7 @@
 # Open Desktop Remote Agent installer (user-level; no Homebrew required).
 set -euo pipefail
 SERVER=''
-PACKAGE_SOURCE='open-desktop-remote-agent@0.1.2'
+PACKAGE_SOURCE='open-desktop-remote-agent@0.1.3'
 INSTALL_DIR="$HOME/Library/Application Support/OpenDesktopRemote"
 INSTALL_ONLY=0
 

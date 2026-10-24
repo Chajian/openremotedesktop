@@ -9,6 +9,7 @@ on:
       - 'packages/**'
       - 'scripts/build-agent-package.mjs'
       - 'scripts/verify-agent-release.mjs'
+      - 'scripts/check-agent-publication*'
       - 'scripts/prepare-github-release.mjs'
       - 'scripts/smoke-packaged-agent.mjs'
       - 'scripts/check-upstream-boundary*'
@@ -56,6 +57,10 @@ jobs:
           registry-url: https://registry.npmjs.org/
       - name: Verify index and full Git history are free from sensitive data
         run: node scripts/check-source-hygiene.mjs --all
+      - name: Test publication preflight
+        # Older download-only tags need not contain this new helper.
+        if: github.event_name != 'workflow_dispatch' || inputs.release_tag == ''
+        run: node --test scripts/check-agent-publication.test.mjs
       - name: Install Agent workspace
         run: pnpm --filter @open-desktop-remote/agent... install --frozen-lockfile
       - name: Verify original upstream files
@@ -75,6 +80,9 @@ jobs:
           else
             node scripts/verify-agent-release.mjs
           fi
+      - name: Require an unpublished version for a new release tag
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        run: node scripts/check-agent-publication.mjs
       - name: Install packed tarball in a clean prefix
         run: |
           npm pack ./dist/agent-npm --pack-destination dist
@@ -148,19 +156,9 @@ jobs:
           pnpm agent:package
           node scripts/verify-agent-release.mjs "$GITHUB_REF_NAME"
           pnpm upstream:check
-      - name: Check if npm version is already published
-        id: npm-version
-        working-directory: dist/agent-npm
-        run: |
-          version="$(node -p "require('./package.json').version")"
-          if npm view "open-desktop-remote-agent@${version}" version --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
-            echo "Already published on npm; no duplicate staging required."
-            echo "published=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "published=false" >> "$GITHUB_OUTPUT"
-          fi
+      - name: Recheck npm version availability before staging
+        run: node scripts/check-agent-publication.mjs
       - name: Submit for 2FA review (never publish directly)
-        if: steps.npm-version.outputs.published != 'true'
         working-directory: dist/agent-npm
         run: npm stage publish --access public --registry=https://registry.npmjs.org/
 
