@@ -2,6 +2,7 @@ import { chmod, copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import agentRelease from "../apps/agent/src/version.json" with { type: "json" };
 
 const require = createRequire(new URL("../apps/agent/package.json", import.meta.url));
 const { build } = require("esbuild");
@@ -40,7 +41,7 @@ await chmod(entry, 0o755);
 
 const manifest = {
   name: "open-desktop-remote-agent",
-  version: "0.1.2",
+  version: agentRelease.version,
   description: "Workstation agent for the self-hosted Open Desktop Remote relay",
   license: "Apache-2.0",
   type: "module",

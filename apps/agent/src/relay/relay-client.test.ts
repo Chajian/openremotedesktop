@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { DeviceCredential } from "../credentials/credential-store.js";
 import type { ExecutorManager } from "../executor/executor-manager.js";
 import { RelayClient, type RelaySocket } from "./relay-client.js";
+import agentRelease from "../version.json" with { type: "json" };
 
 const credential: DeviceCredential = {
   serverUrl: "https://remote.example.com/",
@@ -70,6 +71,7 @@ describe("RelayClient", () => {
       "agent.executor_status",
       "agent.ready",
     ]);
+    expect(JSON.parse(socket.sent[0]!).agentVersion).toBe(agentRelease.version);
     release();
     await expect(pending).resolves.toBe("reconnect");
   });
@@ -104,6 +106,9 @@ describe("RelayClient", () => {
       ["agent.hello", "agent.ready"],
       ["agent.hello", "agent.ready"],
     ]);
+    for (const socket of sockets) {
+      expect(JSON.parse(socket.sent[0]!).agentVersion).toBe(agentRelease.version);
+    }
   });
 
   it("uses bounded exponential reconnect backoff and resets after a stable connection", async () => {

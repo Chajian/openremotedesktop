@@ -9,6 +9,7 @@ import {
   type RelayMessage,
 } from "@open-desktop-remote/protocol";
 import WebSocket from "ws";
+import agentRelease from "../version.json" with { type: "json" };
 import type { DeviceCredential } from "../credentials/credential-store.js";
 import type { ExecutorManager } from "../executor/executor-manager.js";
 import { ToolDispatcher } from "../requests/tool-dispatcher.js";
@@ -355,7 +356,7 @@ export class RelayClient {
         type: "agent.hello",
         protocolVersion: PROTOCOL_VERSION,
         deviceId: this.options.credential.deviceId,
-        agentVersion: "0.1.0",
+        agentVersion: agentRelease.version,
         protocolRange: { min: 1, max: 1 },
         platform:
           process.platform === "win32" ||
