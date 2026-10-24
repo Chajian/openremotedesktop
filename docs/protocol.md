@@ -17,7 +17,7 @@ Sent by the Agent after relay authentication.
 Fields include:
 
 - `deviceId`
-- `agentVersion`
+- `agentVersion`: the Agent release version, shared with the published npm package version
 - `protocolRange: { min, max }`
 - `platform`: `win32 | darwin | linux`
 - `desktopCommanderVersion`

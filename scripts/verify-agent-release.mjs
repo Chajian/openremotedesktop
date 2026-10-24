@@ -1,6 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import agentRelease from "../apps/agent/src/version.json" with { type: "json" };
 
 const folder = fileURLToPath(new URL("../dist/agent-npm/", import.meta.url));
 const pkg = JSON.parse(await readFile(join(folder, "package.json"), "utf8"));
@@ -12,6 +13,8 @@ function requireCondition(ok, message) {
 
 requireCondition(pkg.name === "open-desktop-remote-agent", "unexpected package name");
 requireCondition(/^\d+\.\d+\.\d+$/.test(pkg.version), "version must be stable semver");
+requireCondition(pkg.version === agentRelease.version,
+  "package version differs from the Agent runtime release version");
 requireCondition(pkg.private !== true, "npm package cannot be private");
 requireCondition(pkg.license === "Apache-2.0", "license mismatch");
 requireCondition(

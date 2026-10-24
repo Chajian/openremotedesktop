@@ -10,6 +10,8 @@
 
 发布工作流会在三种系统验证打包及 25 个 Desktop Commander 工具，然后在 Ubuntu 上完整测试并通过 npm OIDC 提交暂存包。批准操作仅能在 npm 账号内由本人执行。另一个独立任务从经过验证的 npm tarball 生成 GitHub Release 附件并发布 GitHub Release，不绕过 npm 审核。
 
+Agent 发行版本的唯一来源是 `apps/agent/src/version.json`。Relay 握手中的 `agentVersion` 和生成的 npm 包版本读取同一份数据；`node scripts/set-agent-version.mjs X.Y.Z` 同时更新该数据、Windows/macOS 安装脚本及 Server 安装器版本。内部工作区包的 `0.0.0` 不作为发行版本。
+
 ## 配置 npm Trusted Publisher
 
 **先将工作流提交到新 GitHub 仓库的默认分支，再到 npm 配置 Trusted Publisher。** 仓库迁移后应为 `openremotedesktop` 新增 GitHub Actions 可信发布关联，并撤销不再使用的旧仓库关联。npm 包名仍是 `open-desktop-remote-agent`，无需新建 npm 包。
