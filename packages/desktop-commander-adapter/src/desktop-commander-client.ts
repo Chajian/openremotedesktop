@@ -21,6 +21,7 @@ export type ToolDefinition = {
 export type DesktopCommanderStartOptions = {
   desktopCommanderVersion?: typeof DESKTOP_COMMANDER_VERSION;
   cwd?: string;
+  clientInfo?: { name: string; version: string };
   // Transfer lifecycle ownership before connect can spawn a subprocess.
   onCreated?: (client: DesktopCommanderClient) => void;
 };
@@ -83,7 +84,7 @@ export class DesktopCommanderClient {
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
       stderr: "pipe",
     });
-    const client = new Client({
+    const client = new Client(options.clientInfo ?? {
       name: "open-desktop-remote-agent",
       version: "0.1.0",
     });
@@ -100,13 +101,16 @@ export class DesktopCommanderClient {
         throw new Error("Desktop Commander server version does not match the pinned version");
       }
       return adapter;
-    } catch (error) {
+    } catch (startupError) {
       try {
         await adapter.close();
-      } catch {
-        throw new Error("Desktop Commander startup failed and subprocess cleanup was not confirmed");
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [startupError, cleanupError],
+          "Desktop Commander startup failed and subprocess cleanup was not confirmed",
+        );
       }
-      throw error;
+      throw startupError;
     }
   }
 

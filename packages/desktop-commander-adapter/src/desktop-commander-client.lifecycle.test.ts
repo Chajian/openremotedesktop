@@ -91,6 +91,32 @@ async function within<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 }
 
 describe("Desktop Commander subprocess lifecycle", () => {
+  it("sends the supplied release identity in the actual MCP handshake", async () => {
+    const client = await DesktopCommanderClient.start({
+      clientInfo: { name: "fixture-release-agent", version: "0.1.3" },
+    });
+
+    const result = await client.callTool("get_client_info", {});
+
+    expect(result.content).toEqual([{
+      type: "text",
+      text: '{"name":"fixture-release-agent","version":"0.1.3"}',
+    }]);
+    await client.close();
+  });
+
+  it("preserves the default MCP identity when no client info is supplied", async () => {
+    const client = await DesktopCommanderClient.start();
+
+    const result = await client.callTool("get_client_info", {});
+
+    expect(result.content).toEqual([{
+      type: "text",
+      text: '{"name":"open-desktop-remote-agent","version":"0.1.0"}',
+    }]);
+    await client.close();
+  });
+
   it("waits for the real child close after forced termination", async () => {
     fixture.mode = "stubborn";
     const client = await DesktopCommanderClient.start();
@@ -251,16 +277,25 @@ describe("Desktop Commander subprocess lifecycle", () => {
 
   it("does not hide failed startup cleanup from the early owner", async () => {
     const connect = Client.prototype.connect;
+    const startupError = new Error("fixture startup diagnostic must stay private");
+    const cleanupError = new Error("fixture cleanup diagnostic must stay private");
     vi.spyOn(Client.prototype, "connect").mockImplementationOnce(async function (this: Client, transport, options) {
       await connect.call(this, transport, options);
-      vi.spyOn(transport, "close").mockRejectedValueOnce(new Error("fixture cleanup diagnostic must stay private"));
-      throw new Error("fixture startup diagnostic must stay private");
+      vi.spyOn(transport, "close").mockRejectedValueOnce(cleanupError);
+      throw startupError;
     });
     let owned: DesktopCommanderClient | undefined;
 
-    await expect(DesktopCommanderClient.start({
+    const failure = await DesktopCommanderClient.start({
       onCreated(client) { owned = client; },
-    })).rejects.toThrow("startup failed and subprocess cleanup was not confirmed");
+    }).then(() => undefined, (error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    const aggregate = failure as AggregateError;
+    expect(aggregate.message).toBe("Desktop Commander startup failed and subprocess cleanup was not confirmed");
+    expect(aggregate.errors).toHaveLength(2);
+    expect(aggregate.errors[0]).toBe(startupError);
+    expect(aggregate.errors[1]).toBe(cleanupError);
 
     expect(owned).toBeInstanceOf(DesktopCommanderClient);
     expect(currentSession().closed).toBe(false);
