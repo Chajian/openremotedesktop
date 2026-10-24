@@ -291,7 +291,7 @@ describe("one-command onboarding", () => {
       const script = await app.inject({ url: endpoint });
       expect(script.statusCode).toBe(200);
       expect(script.headers["cache-control"]).toBe("no-store");
-      expect(script.body).toContain("open-desktop-remote-agent@0.1.1");
+      expect(script.body).toContain("open-desktop-remote-agent@0.1.2");
       expect(script.body).toContain("registry.npmjs.org");
       const page = await app.inject({ url: "/dashboard/connect?step=2&os=" + os, headers: { cookie } });
       const { createHash } = await import("node:crypto");
