@@ -12,6 +12,8 @@
 
 Agent 发行版本的唯一来源是 `apps/agent/src/version.json`。Relay 握手中的 `agentVersion` 和生成的 npm 包版本读取同一份数据；`node scripts/set-agent-version.mjs X.Y.Z` 同时更新该数据、Windows/macOS 安装脚本及 Server 安装器版本。内部工作区包的 `0.0.0` 不作为发行版本。
 
+本次 Desktop Commander `0.3.1` 升级在源码中准备新的 Agent `0.1.3`，**仍是未发布候选版本**。已发布的 `open-desktop-remote-agent@0.1.2` 依赖 Desktop Commander `0.2.52`，不能用同一个 npm 版本号表示这次升级。准备版本号不会创建标签、暂存 npm 包或上线安装器；`ODR_AGENT_INSTALL_ENABLED` 默认关闭，必须继续等待下述发布与真实设备验收门禁。
+
 ## 配置 npm Trusted Publisher
 
 **先将工作流提交到新 GitHub 仓库的默认分支，再到 npm 配置 Trusted Publisher。** 仓库迁移后应为 `openremotedesktop` 新增 GitHub Actions 可信发布关联，并撤销不再使用的旧仓库关联。npm 包名仍是 `open-desktop-remote-agent`，无需新建 npm 包。
@@ -32,22 +34,24 @@ Agent 发行版本的唯一来源是 `apps/agent/src/version.json`。Relay 握�
 ## 首次验证及后续发行
 
 1. 将本分支合并到 GitHub 的 `master` 后，打开 GitHub → Actions → `Agent npm staged release` → Run workflow；这是**只验证、不发布**的安全测试。
-2. `open-desktop-remote-agent@0.1.0` 已在 npm Registry 公开发布。新 GitHub 仓库不迁移旧版本的 Release/Tag，不需要为 `0.1.0` 重复创建标签或暂存发布。
-3. 新版本从 `master` 修改：`node scripts/set-agent-version.mjs 0.1.1`（示例），提交这些改动并运行测试。
-4. 新版本代码合并进入 `master` 后，从该提交创建标签 `agent-v0.1.1` 并推送：
+2. 先查询 npm Registry，确认候选版本尚未公开；已发布版本不能被覆盖，也不能因包名和版本相同就跳过内容核验。
+3. 新版本从 `master` 修改：`node scripts/set-agent-version.mjs 0.1.3`（本次候选），提交这些改动并运行测试。打包后可只读运行 `node scripts/check-agent-publication.mjs` 检查版本可用性。
+4. 新版本代码合并进入 `master` 后，从该提交创建标签 `agent-v0.1.3` 并推送：
 
 ```bash
 git checkout master
 git pull --ff-only
-git tag agent-v0.1.1
-git push origin agent-v0.1.1
+git tag agent-v0.1.3
+git push origin agent-v0.1.3
 ```
 
-5. GitHub Actions 自动验证标签版本和 `master` 提交关系，通过后创建带下载附件的 GitHub Release，并执行 `npm stage publish --access public`。如果同版本已经正式发布到 npm（例如 `0.1.0`），则跳过重复暂存。
+5. GitHub Actions 自动验证标签版本和 `master` 提交关系，通过后创建带下载附件的 GitHub Release，并执行 `npm stage publish --access public`。新标签验证和暂存前都会查询公开 npm Registry：只有明确的 HTTP 404 表示版本可用；已发布版本、认证/限流/服务端错误、网络失败和超时均阻止暂存。即使已发布元数据看似相同，也不把它当作本次 tarball 内容相同的证据。
 6. 如果是新 npm 版本，在 npm → Staged Packages 审查包名、版本及内容，并用本人 Passkey 点击 Approve，才会正式发布到 Registry。
 7. 在 npm Registry 验证发布版本并在干净 Windows/macOS 上完成真实配对及 READY 测试后，才可启用 `ODR_AGENT_INSTALL_ENABLED=true`。
 
 GitHub Actions 不能替你批准暂存包；这是有意保留的发布安全门槛。
+
+新标签工作流在版本已经公开后重跑会明确失败，不再静默跳过 npm 暂存后继续发布另一份同版本产物。只需补建已有标签的 GitHub 下载时，使用下方 `release_tag` 手动流程；该流程不检查“尚未发布”，也不执行 npm 暂存。普通 PR 运行预检的离线测试，不依赖 Registry 可用性。
 
 ## 自动生成的 GitHub Releases
 

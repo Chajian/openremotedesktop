@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-export const AGENT_INSTALL_VERSION = "0.1.2";
+export const AGENT_INSTALL_VERSION = "0.1.3";
 export type InstallerOS = "win" | "mac";
 export const installerRoute = (os: InstallerOS) =>
   os === "win" ? "/install/windows.ps1" : "/install/macos.sh";
