@@ -12,9 +12,19 @@ if (stubborn) {
 }
 
 const lines = createInterface({ input: process.stdin });
+let clientInfo;
 for await (const line of lines) {
   const request = JSON.parse(line);
+  if (request.method === "tools/call" && request.params.name === "get_client_info") {
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: { content: [{ type: "text", text: JSON.stringify(clientInfo) }] },
+    }) + "\n");
+    continue;
+  }
   if (request.method !== "initialize") continue;
+  clientInfo = request.params.clientInfo;
 
   if (mode === "stderr-flood") {
     const chunk = "fixture stderr must stay private\n".repeat(2_048);
