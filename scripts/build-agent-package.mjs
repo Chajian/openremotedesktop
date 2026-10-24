@@ -53,7 +53,7 @@ const manifest = {
   },
   dependencies: {
     "@modelcontextprotocol/client": "2.2.0",
-    "@wonderwhy-er/desktop-commander": "0.2.52",
+    "@wonderwhy-er/desktop-commander": "0.3.1",
     ws: "^8.18.3",
     zod: "^4.0.0",
   },

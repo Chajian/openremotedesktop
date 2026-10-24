@@ -9,7 +9,7 @@ import {
   getDefaultEnvironment,
 } from "@modelcontextprotocol/client/stdio";
 
-export const DESKTOP_COMMANDER_VERSION = "0.2.52" as const;
+export const DESKTOP_COMMANDER_VERSION = "0.3.1" as const;
 
 export type ToolDefinition = {
   name: string;

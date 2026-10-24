@@ -137,7 +137,7 @@ export async function startFakeAgent(
     agentVersion: "e2e-fake",
     protocolRange: { min: 1, max: 1 },
     platform: "linux",
-    desktopCommanderVersion: "0.2.52",
+    desktopCommanderVersion: "0.3.1",
     capabilities: ["desktop-commander"],
   });
   send({
@@ -150,7 +150,7 @@ export async function startFakeAgent(
     type: "agent.ready",
     protocolVersion: PROTOCOL_VERSION,
     deviceId: credential.deviceId,
-    desktopCommanderVersion: "0.2.52",
+    desktopCommanderVersion: "0.3.1",
     capabilities: ["desktop-commander"],
   });
 

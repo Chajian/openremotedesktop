@@ -17,8 +17,8 @@ const client = new Client({ name: "npm-install-smoke", version: "0.1.0" });
 try {
   await client.connect(transport);
   const tools = (await client.listTools()).tools;
-  if (tools.length !== 26) throw new Error("Expected 26 Desktop Commander tools, got " + tools.length);
-  console.log("npm-installed Desktop Commander exposes 26 tools.");
+  if (tools.length !== 25) throw new Error("Expected 25 Desktop Commander tools, got " + tools.length);
+  console.log("npm-installed Desktop Commander exposes 25 tools.");
 } finally {
   await client.close().catch(() => undefined);
 }

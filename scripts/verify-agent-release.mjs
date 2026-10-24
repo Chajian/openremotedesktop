@@ -31,7 +31,7 @@ for (const dep of Object.values({ ...pkg.dependencies, ...pkg.optionalDependenci
     "unpublished workspace dependency found");
 }
 requireCondition(
-  pkg.dependencies?.["@wonderwhy-er/desktop-commander"] === "0.2.52",
+  pkg.dependencies?.["@wonderwhy-er/desktop-commander"] === "0.3.1",
   "Desktop Commander must remain the original pinned npm dependency",
 );
 const buildMeta = JSON.parse(await readFile(

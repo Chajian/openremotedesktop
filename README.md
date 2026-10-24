@@ -14,7 +14,7 @@ The server supports a legacy single-owner mode as well as GitHub identities and 
   and can immediately revoke their access and refresh tokens.
 - Multiple devices for one owner, with stable device IDs, friendly names, READY state, rename and revoke.
 - Outbound-only Agent relay over WSS; no inbound workstation ports are required.
-- Local Desktop Commander `0.2.52` through stdio; its filesystem, process, search and document tools remain local.
+- Local Desktop Commander `0.3.1` through stdio; its filesystem, process, search and document tools remain local.
 - Safe ambiguous-delivery behavior: a dispatched request is never silently replayed after a disconnect.
 - Minimal owner Dashboard, SQLite persistence, privacy-safe default logging, Docker Compose and Caddy.
 - Windows, macOS and Linux Agent target; Linux/Docker Server target.

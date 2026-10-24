@@ -12,7 +12,7 @@ on:
       - 'scripts/prepare-github-release.mjs'
       - 'scripts/smoke-packaged-agent.mjs'
       - 'scripts/check-upstream-boundary*'
-      - 'scripts/upstream-desktop-commander-0.2.52.json'
+      - 'scripts/upstream-desktop-commander-0.3.1.json'
       - 'pnpm-lock.yaml'
   workflow_dispatch:
     inputs:

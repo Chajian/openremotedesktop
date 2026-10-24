@@ -81,11 +81,11 @@ does not resend a previously dispatched tool call.
 
 ## Desktop Commander
 
-V1 pins `@wonderwhy-er/desktop-commander@0.2.52`.
+V1 pins `@wonderwhy-er/desktop-commander@0.3.1`.
 
 The Adapter resolves the installed package entry point and starts the ordinary local stdio MCP mode with `--no-onboarding`. It does not use Desktop Commander's official Remote mode.
 
-Compatibility is gated by a generated 26-tool manifest and live stdio integration tests.
+Compatibility is gated by a generated 25-tool manifest and live stdio integration tests.
 
 The generated catalog lives in the pure `tool-contracts` workspace package. The
 Agent still launches the original pinned upstream package through the same local

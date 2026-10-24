@@ -8,7 +8,7 @@
 - `agent-smoke.yml`：Windows、macOS、Linux 的 Agent 与 npm 安装包冒烟验证。
 - `npm-agent-release.yml`：PR 或手动运行时仅验证；匹配 `agent-v*` 的标签触发跨平台验证、npm 暂存发布，以及带附件的 GitHub Release 自动创建。
 
-发布工作流会在三种系统验证打包及 26 个 Desktop Commander 工具，然后在 Ubuntu 上完整测试并通过 npm OIDC 提交暂存包。批准操作仅能在 npm 账号内由本人执行。另一个独立任务从经过验证的 npm tarball 生成 GitHub Release 附件并发布 GitHub Release，不绕过 npm 审核。
+发布工作流会在三种系统验证打包及 25 个 Desktop Commander 工具，然后在 Ubuntu 上完整测试并通过 npm OIDC 提交暂存包。批准操作仅能在 npm 账号内由本人执行。另一个独立任务从经过验证的 npm tarball 生成 GitHub Release 附件并发布 GitHub Release，不绕过 npm 审核。
 
 ## 配置 npm Trusted Publisher
 
