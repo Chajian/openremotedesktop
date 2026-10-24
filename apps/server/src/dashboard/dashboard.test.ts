@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
 import { createDatabase } from "../db/database.js";
 import { DeviceRepository } from "../devices/device-repository.js";
+import { AGENT_INSTALL_VERSION } from "./installer.js";
 
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
@@ -291,7 +292,7 @@ describe("one-command onboarding", () => {
       const script = await app.inject({ url: endpoint });
       expect(script.statusCode).toBe(200);
       expect(script.headers["cache-control"]).toBe("no-store");
-      expect(script.body).toContain("open-desktop-remote-agent@0.1.1");
+      expect(script.body).toContain(`open-desktop-remote-agent@${AGENT_INSTALL_VERSION}`);
       expect(script.body).toContain("registry.npmjs.org");
       const page = await app.inject({ url: "/dashboard/connect?step=2&os=" + os, headers: { cookie } });
       const { createHash } = await import("node:crypto");
