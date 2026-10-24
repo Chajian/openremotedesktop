@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -405,11 +406,11 @@ it("keeps dispatched work and read-only recovery available when opportunistic cl
 it("never dispatches if authorization used the entire MCP request budget", async () => {
   let now = 10_000;
   const f = fixture(true, () => now);
-  const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
   try {
     const actor = { ...f.actor, authorize: async () => { now += 45_001; return true; } };
     await expect(f.service.invoke(actor, f.device.id, "write_file", {}, {
-      timeoutMs: 45_000, deadlineAt: now + 45_000,
+      timeoutMs: 45_000, deadlineAtMonotonicMs: now + 45_000,
     })).rejects.toMatchObject({ code: "REQUEST_TIMEOUT", details: {
       dispatched: false, reason: "deadline",
     } });
@@ -421,7 +422,7 @@ it("never dispatches if authorization used the entire MCP request budget", async
 it("subtracts authorization time from the broker waiter without replaying any operation", async () => {
   let now = 10_000;
   const f = fixture(true, () => now);
-  const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
   try {
     let checks = 0;
     const actor = { ...f.actor, authorize: async () => { if (++checks === 1) now += 10_000; return true; } };
@@ -431,7 +432,7 @@ it("subtracts authorization time from the broker waiter without replaying any op
       return f.response(options.requestId!);
     });
     const result = await f.service.invoke(actor, f.device.id, "write_file", {}, {
-      timeoutMs: 45_000, deadlineAt: now + 45_000,
+      timeoutMs: 45_000, deadlineAtMonotonicMs: now + 45_000,
     });
     expect(waited).toBe(35_000);
     expect(brokerCall).toHaveBeenCalledTimes(1);
@@ -501,4 +502,33 @@ it("preserves a recoverable operation ID through the MCP SDK after waiter timeou
     await client.close();
     await server.close();
   }
+});
+
+it("uses elapsed monotonic time for the in-flight budget even across a wall-clock rollback", async () => {
+  let wall = 20_000;
+  let monotonic = 1_000;
+  const wallClock = vi.spyOn(Date, "now").mockImplementation(() => wall);
+  const monoClock = vi.spyOn(performance, "now").mockImplementation(() => monotonic);
+  const f = fixture(true, () => wall);
+  try {
+    let checks = 0;
+    const actor = { ...f.actor, authorize: async () => {
+      if (++checks === 1) {
+        wall -= 90_000;
+        monotonic += 11_000;
+      }
+      return true;
+    } };
+    let remaining: number | undefined;
+    vi.spyOn(f.broker, "call").mockImplementation(async (_, __, ___, options) => {
+      remaining = options.timeoutMs;
+      return f.response(options.requestId!);
+    });
+    const result = await f.service.invoke(actor, f.device.id, "write_file", {}, {
+      timeoutMs: 45_000, deadlineAtMonotonicMs: monotonic + 45_000,
+    });
+    expect(result.type).toBe("tool.result");
+    expect(remaining).toBe(34_000);
+    expect(remaining).toBeLessThanOrEqual(45_000);
+  } finally { wallClock.mockRestore(); monoClock.mockRestore(); }
 });

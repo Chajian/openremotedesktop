@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import {
   fromJsonSchema,
   type CallToolResult,
@@ -34,6 +35,8 @@ export type DesktopToolDependencies = {
 
 // The MCP SDK client defaults to a 60s request deadline. Leave headroom
 // for routing, authentication, final authorization and HTTP response delivery.
+// Track this budget with the monotonic process clock: wall-clock adjustments
+// must neither increase the remaining waiter nor dispatch an expired request.
 // This limits the Server's waiter, NOT the duration of an already-running Agent tool.
 const MAX_TOOL_WAITER_TIMEOUT_MS = 45_000;
 
@@ -113,8 +116,9 @@ export function registerDesktopCommanderTools(
       async (args, extra) => {
         const ownerId = deps.authOwnerId(extra.http?.authInfo);
         if (!ownerId) return errorResult(new Error("Missing authenticated account"));
-        const startedAt = Date.now();
-        const deadlineAt = startedAt + waiterTimeoutMs(deps.toolTimeoutMs);
+        const startedAt = performance.now();
+        const maxWaiterMs = waiterTimeoutMs(deps.toolTimeoutMs);
+        const deadlineAtMonotonicMs = startedAt + maxWaiterMs;
         const { deviceId, forwarded } = splitRoutingArguments(args);
         let targetDeviceId = deviceId;
         try {
@@ -125,20 +129,20 @@ export function registerDesktopCommanderTools(
           );
           const actor = deps.operationActor?.(extra.http?.authInfo);
           if (deps.operations && !actor) throw new Error("Missing authenticated account");
-          const remaining = deadlineAt - Date.now();
+          const remaining = Math.min(maxWaiterMs, deadlineAtMonotonicMs - performance.now());
           if (remaining <= 0) {
             throw new PreDispatchRejectedError("REQUEST_TIMEOUT", "Tool request deadline elapsed before dispatch", { reason: "deadline" });
           }
           const relayResult = deps.operations && actor
             ? await deps.operations.invoke(actor, targetDeviceId, tool.name, forwarded,
-                { timeoutMs: remaining, deadlineAt })
+                { timeoutMs: remaining, deadlineAtMonotonicMs })
             : await deps.broker.call(targetDeviceId, tool.name, forwarded,
                 { timeoutMs: remaining });
           deps.logger?.event("tool.call", {
             requestId: relayResult.requestId,
             deviceId: targetDeviceId,
             toolName: tool.name,
-            durationMs: Date.now() - startedAt,
+            durationMs: Math.max(0, performance.now() - startedAt),
             success: !(relayResult.result && typeof relayResult.result === "object" && "isError" in relayResult.result && relayResult.result.isError === true),
           });
           return relayResult.result as CallToolResult;
@@ -146,7 +150,7 @@ export function registerDesktopCommanderTools(
           deps.logger?.event("tool.call", {
             ...(targetDeviceId ? { deviceId: targetDeviceId } : {}),
             toolName: tool.name,
-            durationMs: Date.now() - startedAt,
+            durationMs: Math.max(0, performance.now() - startedAt),
             success: false,
             errorCode: errorCode(error),
             ...(error instanceof RelayRequestError && error.details && typeof error.details === "object" && "operationId" in error.details
