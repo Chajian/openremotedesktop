@@ -1,6 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { DesktopCommanderClient } from "../src/desktop-commander-client.js";
+import { buildToolManifest } from "@open-desktop-remote/tool-contracts";
 
 const outputPath = fileURLToPath(
   new URL("../../tool-contracts/src/manifest.generated.json", import.meta.url),
@@ -9,13 +10,7 @@ const outputPath = fileURLToPath(
 const client = await DesktopCommanderClient.start();
 try {
   const tools = await client.listTools();
-  const manifest = tools
-    .map((tool) => ({
-      name: tool.name,
-      description: tool.description ?? "",
-      inputSchema: tool.inputSchema as Record<string, unknown>,
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const manifest = buildToolManifest(tools);
 
   await writeFile(
     outputPath,

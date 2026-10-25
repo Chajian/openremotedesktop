@@ -59,6 +59,7 @@ describe("recovery capability fallback against an old v1 Server", () => {
         const relay = new RelayClient({
           credential: { serverUrl: url, deviceId, refreshCredential: "fixture-refresh" },
           executor,
+          identity: { agentVersion: "new-fixture", desktopCommanderVersion: "0.3.1", platform: "linux" },
           heartbeatIntervalMs: 0,
           refreshToken: async () => ({ accessToken: "fixture-access", deviceId, expiresAt: Date.now() + 60_000 }),
         });

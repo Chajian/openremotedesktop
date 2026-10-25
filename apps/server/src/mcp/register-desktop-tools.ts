@@ -105,13 +105,21 @@ export function registerDesktopCommanderTools(
 ): void {
   for (const sourceTool of DESKTOP_COMMANDER_TOOL_MANIFEST) {
     const tool = addDeviceIdToToolSchema(sourceTool);
+    const { name, inputSchema, outputSchema, title, annotations, icons, _meta, ...metadata } = tool;
     server.registerTool(
-      tool.name,
+      name,
       {
-        description: tool.description,
+        ...metadata,
+        ...(title === undefined ? {} : { title }),
+        ...(annotations === undefined ? {} : { annotations }),
+        ...(icons === undefined ? {} : { icons }),
+        ...(_meta === undefined ? {} : { _meta }),
         inputSchema: fromJsonSchema<Record<string, unknown>>(
-          tool.inputSchema as JsonSchemaType,
+          inputSchema as JsonSchemaType,
         ),
+        ...(outputSchema === undefined ? {} : {
+          outputSchema: fromJsonSchema<Record<string, unknown>>(outputSchema as JsonSchemaType),
+        }),
       },
       async (args, extra) => {
         const ownerId = deps.authOwnerId(extra.http?.authInfo);

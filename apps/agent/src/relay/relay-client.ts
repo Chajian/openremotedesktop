@@ -1,6 +1,5 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import { DESKTOP_COMMANDER_VERSION } from "@open-desktop-remote/desktop-commander-adapter";
 import {
   PROTOCOL_VERSION,
   OPERATION_RECOVERY_CAPABILITY,
@@ -9,7 +8,6 @@ import {
   type RelayMessage,
 } from "@open-desktop-remote/protocol";
 import WebSocket from "ws";
-import agentRelease from "../version.json" with { type: "json" };
 import type { DeviceCredential } from "../credentials/credential-store.js";
 import type { ExecutorManager } from "../executor/executor-manager.js";
 import { ToolDispatcher } from "../requests/tool-dispatcher.js";
@@ -41,9 +39,17 @@ type WaitForSocketClose = (
   signal: AbortSignal,
 ) => Promise<void>;
 
+export type RelayRuntimeIdentity = Readonly<{
+  agentVersion: string;
+  desktopCommanderVersion: string;
+  platform: "win32" | "darwin" | "linux";
+  toolsHash?: string;
+}>;
+
 export type RelayClientOptions = {
   credential: DeviceCredential;
   executor: ExecutorManager;
+  identity: RelayRuntimeIdentity;
   refreshToken?: (credential: DeviceCredential) => Promise<RelayToken>;
   socketFactory?: SocketFactory;
   waitForSocketClose?: WaitForSocketClose;
@@ -173,7 +179,8 @@ function send(socket: RelaySocket, message: RelayMessage): boolean {
 }
 
 const PROCESS_BOOT_ID = randomUUID();
-type RelaySession = { socket: RelaySocket; recovery: boolean };
+type ReportedExecutorState = "EXECUTOR_FAILED" | "EXECUTOR_STARTING" | "INCOMPATIBLE";
+type RelaySession = { socket: RelaySocket; recovery: boolean; executorState?: ReportedExecutorState };
 
 export class RelayClient {
   readonly bootId: string;
@@ -192,8 +199,10 @@ export class RelayClient {
   private readonly now: () => number;
   private readonly random: () => number;
   private readonly stableConnectionMs: number;
+  private readonly identity: RelayRuntimeIdentity;
 
   constructor(private readonly options: RelayClientOptions) {
+    this.identity = { ...options.identity };
     this.refreshToken =
       options.refreshToken ?? ((credential) => refreshRelayToken(credential));
     this.socketFactory = options.socketFactory ?? defaultSocketFactory;
@@ -218,41 +227,37 @@ export class RelayClient {
 
   private async recoverStalledExecutor(): Promise<void> {
     const original = this.session;
-    let lastReportedState: "EXECUTOR_FAILED" | "EXECUTOR_STARTING" | undefined;
-    const status = (state: "EXECUTOR_FAILED" | "EXECUTOR_STARTING") => {
-      if (original && this.session === original && lastReportedState !== state) {
-        const delivered = send(original.socket, {
-          type: "agent.executor_status", protocolVersion: PROTOCOL_VERSION,
-          deviceId: this.options.credential.deviceId, state,
-        });
-        if (delivered) lastReportedState = state;
-      }
-    };
-    // The actual local state change occurs only after the old executor closed.
-    const unsubscribe = this.options.executor.onStateChanged((state) => {
-      if (state === "EXECUTOR_STARTING") status("EXECUTOR_STARTING");
-    });
-    status("EXECUTOR_FAILED");
+    if (original) this.reportExecutorState(original, "EXECUTOR_FAILED");
     try {
       await this.options.executor.restart();
       if (this.options.executor.state() !== "READY") {
-        status("EXECUTOR_FAILED");
+        if (original) this.reportExecutorState(original, "EXECUTOR_FAILED");
         return;
       }
-      if (original && this.session === original) {
-        send(original.socket, {
-          type: "agent.ready", protocolVersion: PROTOCOL_VERSION,
-          deviceId: this.options.credential.deviceId,
-          desktopCommanderVersion: DESKTOP_COMMANDER_VERSION,
-          capabilities: ["desktop-commander", OPERATION_RECOVERY_CAPABILITY],
-        });
-      }
-    } catch {
-      status("EXECUTOR_FAILED");
-      throw new Error("Stalled local executor could not be restarted");
-    } finally {
-      unsubscribe();
+      if (original) this.reportReady(original);
+    } catch (cause) {
+      if (original) this.reportExecutorState(original, "EXECUTOR_FAILED");
+      throw new Error("Stalled local executor could not be restarted", { cause });
     }
+  }
+
+  private reportExecutorState(session: RelaySession, state: ReportedExecutorState): void {
+    if (this.session !== session || session.executorState === state) return;
+    if (send(session.socket, {
+      type: "agent.executor_status", protocolVersion: PROTOCOL_VERSION,
+      deviceId: this.options.credential.deviceId, state,
+    })) session.executorState = state;
+  }
+
+  private reportReady(session: RelaySession): void {
+    if (this.session !== session || this.options.executor.state() !== "READY") return;
+    if (send(session.socket, {
+      type: "agent.ready", protocolVersion: PROTOCOL_VERSION,
+      deviceId: this.options.credential.deviceId,
+      desktopCommanderVersion: this.identity.desktopCommanderVersion,
+      ...(this.identity.toolsHash === undefined ? {} : { toolsHash: this.identity.toolsHash }),
+      capabilities: ["desktop-commander", OPERATION_RECOVERY_CAPABILITY],
+    })) delete session.executorState;
   }
 
   async connectOnce(
@@ -351,42 +356,29 @@ export class RelayClient {
     socket.on("message", onMessage);
 
     let heartbeat: ReturnType<typeof setInterval> | null = null;
+    const unsubscribeState = this.options.executor.onStateChanged((state) => {
+      if (state === "EXECUTOR_STARTING" || state === "EXECUTOR_FAILED" || state === "INCOMPATIBLE") {
+        this.reportExecutorState(session, state);
+      }
+    });
     try {
       send(socket, {
         type: "agent.hello",
         protocolVersion: PROTOCOL_VERSION,
         deviceId: this.options.credential.deviceId,
-        agentVersion: agentRelease.version,
+        agentVersion: this.identity.agentVersion,
         protocolRange: { min: 1, max: 1 },
-        platform:
-          process.platform === "win32" ||
-          process.platform === "darwin" ||
-          process.platform === "linux"
-            ? process.platform
-            : "linux",
-        desktopCommanderVersion: DESKTOP_COMMANDER_VERSION,
+        platform: this.identity.platform,
+        desktopCommanderVersion: this.identity.desktopCommanderVersion,
         capabilities: ["desktop-commander", OPERATION_RECOVERY_CAPABILITY],
       });
 
       if (this.options.executor.state() !== "READY") {
-        send(socket, {
-          type: "agent.executor_status",
-          protocolVersion: PROTOCOL_VERSION,
-          deviceId: this.options.credential.deviceId,
-          state: "EXECUTOR_STARTING",
-        });
+        this.reportExecutorState(session, "EXECUTOR_STARTING");
         await this.options.executor.start();
       }
 
-      if (!incompatible && this.session === session && this.options.executor.state() === "READY") {
-        send(socket, {
-          type: "agent.ready",
-          protocolVersion: PROTOCOL_VERSION,
-          deviceId: this.options.credential.deviceId,
-          desktopCommanderVersion: DESKTOP_COMMANDER_VERSION,
-          capabilities: ["desktop-commander", OPERATION_RECOVERY_CAPABILITY],
-        });
-      }
+      if (!incompatible) this.reportReady(session);
 
       heartbeat =
         this.heartbeatIntervalMs > 0
@@ -406,6 +398,7 @@ export class RelayClient {
       await this.waitForSocketClose(socket, signal);
     } finally {
       if (heartbeat) clearInterval(heartbeat);
+      unsubscribeState();
       socket.off("message", onMessage);
       socket.off("close", onClose);
       socket.off("error", onSocketError);

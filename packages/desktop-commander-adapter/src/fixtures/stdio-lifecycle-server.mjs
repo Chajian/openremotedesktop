@@ -26,6 +26,9 @@ for await (const line of lines) {
   if (request.method !== "initialize") continue;
   clientInfo = request.params.clientInfo;
 
+  if (mode === "noise-before-initialize") process.stdout.write("fixture malformed frame\n");
+  if (mode === "invalid-frame-before-initialize") process.stdout.write('{"unexpected":"fixture"}\n');
+
   if (mode === "stderr-flood") {
     const chunk = "fixture stderr must stay private\n".repeat(2_048);
     for (let index = 0; index < 128; index += 1) {

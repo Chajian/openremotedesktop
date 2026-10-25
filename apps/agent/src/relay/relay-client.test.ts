@@ -5,6 +5,8 @@ import type { ExecutorManager } from "../executor/executor-manager.js";
 import { RelayClient, type RelaySocket } from "./relay-client.js";
 import agentRelease from "../version.json" with { type: "json" };
 
+const identity = { agentVersion: agentRelease.version, desktopCommanderVersion: "0.3.1", platform: "linux" } as const;
+
 const credential: DeviceCredential = {
   serverUrl: "https://remote.example.com/",
   deviceId: "6d1cf056-7fc5-49d4-8930-f989aafd957b",
@@ -37,6 +39,7 @@ function fakeExecutor(state: "AUTHENTICATED" | "READY" = "AUTHENTICATED") {
       current = "INCOMPATIBLE" as never;
     }),
     close: vi.fn(async () => undefined),
+    onStateChanged: () => () => undefined,
   } as unknown as ExecutorManager & {
     start: ReturnType<typeof vi.fn>;
     markIncompatible: ReturnType<typeof vi.fn>;
@@ -45,6 +48,24 @@ function fakeExecutor(state: "AUTHENTICATED" | "READY" = "AUTHENTICATED") {
 }
 
 describe("RelayClient", () => {
+  it("uses the injected runtime identity in hello and READY without binding to an executor package", async () => {
+    const socket = new FakeSocket();
+    const relay = new RelayClient({
+      credential,
+      executor: fakeExecutor("READY"),
+      identity: { agentVersion: "fixture-agent", desktopCommanderVersion: "fixture-executor", platform: "darwin", toolsHash: "fixture-catalog" },
+      refreshToken: async () => ({ accessToken: "access", expiresAt: Date.now() + 60_000, deviceId: credential.deviceId }),
+      socketFactory: async () => socket,
+      waitForSocketClose: async () => undefined,
+      heartbeatIntervalMs: 0,
+    });
+    await relay.connectOnce(new AbortController().signal);
+    const [hello, ready] = socket.sent.map(value => JSON.parse(value));
+    expect(hello).toMatchObject({ agentVersion: "fixture-agent", desktopCommanderVersion: "fixture-executor", platform: "darwin" });
+    expect(hello).not.toHaveProperty("toolsHash");
+    expect(ready).toMatchObject({ desktopCommanderVersion: "fixture-executor", toolsHash: "fixture-catalog" });
+  });
+
   it("does not announce READY from transport connection alone", async () => {
     const socket = new FakeSocket();
     const executor = fakeExecutor("AUTHENTICATED");
@@ -52,6 +73,7 @@ describe("RelayClient", () => {
     const waitForClose = new Promise<void>((resolve) => (release = resolve));
 
     const relay = new RelayClient({
+      identity,
       credential,
       executor,
       refreshToken: vi.fn().mockResolvedValue({
@@ -80,6 +102,7 @@ describe("RelayClient", () => {
     const executor = fakeExecutor("READY");
     const sockets = [new FakeSocket(), new FakeSocket()];
     const relay = new RelayClient({
+      identity,
       credential,
       executor,
       refreshToken: vi.fn().mockResolvedValue({
@@ -120,6 +143,7 @@ describe("RelayClient", () => {
     const sleeps: number[] = [];
 
     const relay = new RelayClient({
+      identity,
       credential,
       executor,
       refreshToken: vi.fn().mockResolvedValue({
@@ -156,6 +180,7 @@ describe("RelayClient", () => {
     });
     const requestId = "8a4e7a20-8cad-4211-a277-8e0f4438d581";
     const relay = new RelayClient({
+      identity,
       credential,
       executor,
       refreshToken: vi.fn().mockResolvedValue({
@@ -199,6 +224,7 @@ describe("RelayClient", () => {
     const executor = fakeExecutor("READY");
     const socket = new FakeSocket();
     const relay = new RelayClient({
+      identity,
       credential,
       executor,
       refreshToken: vi.fn().mockResolvedValue({

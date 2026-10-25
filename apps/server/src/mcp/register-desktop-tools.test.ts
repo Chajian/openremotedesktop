@@ -100,6 +100,65 @@ async function fixture(
 }
 
 describe("Desktop Commander MCP registration", () => {
+  it("rejects a cached get_prompts call before dispatch after refreshing the public catalog", async () => {
+    const f = await fixture();
+    try {
+      expect((await f.client.listTools()).tools.some(tool => tool.name === "get_prompts")).toBe(false);
+      await expect(f.client.callTool({ name: "get_prompts", arguments: { deviceId } }))
+        .rejects.toThrow(/Tool get_prompts not found/);
+      expect(f.calls).toHaveLength(0);
+    } finally { await f.close(); }
+  });
+
+  it.each([
+    ["start_search", { path: "/fixture", pattern: "x", contextLines: -1 }],
+    ["start_search", { path: "/fixture", pattern: "x", contextLines: 0.5 }],
+    ["start_search", { path: "/fixture", pattern: "x", maxResults: -1 }],
+    ["start_search", { path: "/fixture", pattern: "x", maxResults: 0.5 }],
+    ["start_search", { path: "/fixture", pattern: "x", timeout_ms: -1 }],
+    ["start_search", { path: "/fixture", pattern: "x", timeout_ms: 0.5 }],
+    ["get_more_search_results", { sessionId: "fixture", offset: 0.5 }],
+    ["get_more_search_results", { sessionId: "fixture", length: 0 }],
+    ["get_more_search_results", { sessionId: "fixture", length: -1 }],
+    ["get_more_search_results", { sessionId: "fixture", length: 0.5 }],
+  ])("rejects invalid %s numeric arguments before routing: %j", async (name, argumentsValue) => {
+    const f = await fixture();
+    try {
+      const result = await f.client.callTool({ name, arguments: { deviceId, ...argumentsValue } });
+      expect(result.isError).toBe(true);
+      expect(f.calls).toHaveLength(0);
+    } finally { await f.close(); }
+  });
+
+  it.each([0, Number.MAX_SAFE_INTEGER])("forwards valid search limit %s unchanged to legacy agents", async limit => {
+    const f = await fixture();
+    try {
+      const result = await f.client.callTool({ name: "start_search", arguments: {
+        deviceId, path: "/fixture", pattern: "x", maxResults: limit, contextLines: 0, timeout_ms: limit,
+      } });
+      expect(result.isError).not.toBe(true);
+      expect(f.calls).toHaveLength(1);
+      expect(f.calls[0]?.args).toMatchObject({ maxResults: limit, contextLines: 0, timeout_ms: limit });
+    } finally { await f.close(); }
+  });
+
+  it("exposes upstream annotations through the real MCP tools/list boundary", async () => {
+    const f = await fixture();
+    try {
+      const { tools } = await f.client.listTools();
+      expect(tools.find(tool => tool.name === "read_file")?.annotations)
+        .toMatchObject({ readOnlyHint: true, destructiveHint: false });
+      expect(tools.find(tool => tool.name === "write_file")?.annotations)
+        .toMatchObject({ readOnlyHint: false, destructiveHint: true });
+      for (const tool of tools) {
+        expect(tool._meta ?? {}).not.toHaveProperty("ui/resourceUri");
+        expect(tool._meta ?? {}).not.toHaveProperty("openai/outputTemplate");
+        expect(tool._meta ?? {}).not.toHaveProperty("openai/widgetAccessible");
+        expect(tool._meta?.ui ?? {}).not.toHaveProperty("resourceUri");
+      }
+    } finally { await f.close(); }
+  });
+
   it("registers Desktop Commander tools as first-class tools with optional deviceId", async () => {
     const f = await fixture();
     try {

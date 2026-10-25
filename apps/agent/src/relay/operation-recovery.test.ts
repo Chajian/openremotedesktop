@@ -8,6 +8,7 @@ import { RelayClient, type RelaySocket } from "./relay-client.js";
 import { DeviceCredentialRejectedError } from "../auth/device-token.js";
 import { ServerRequestError } from "../http/server-client.js";
 
+const identity = { agentVersion: "test-agent", desktopCommanderVersion: "0.3.1", platform: "linux" } as const;
 const deviceId = randomUUID();
 const credential = { deviceId, serverUrl: "https://remote.example.com", refreshCredential: "test-only" };
 class Socket extends EventEmitter implements RelaySocket {
@@ -32,7 +33,7 @@ async function harness() {
   }) });
   await executor.start();
   const sockets: Socket[] = [];
-  const relay = new RelayClient({ credential, executor, heartbeatIntervalMs: 0,
+  const relay = new RelayClient({ identity, credential, executor, heartbeatIntervalMs: 0,
     now: () => 1_000,
     refreshToken: async () => ({ accessToken: "test-access", expiresAt: 99_000, deviceId }),
     socketFactory: async () => { const socket = new Socket(); sockets.push(socket); return socket; },
@@ -55,6 +56,18 @@ function query(socket: Socket, call: OperationCallMessage, bootId = call.bootId)
 }
 
 describe("relay operation recovery", () => {
+  it("reports an unexpected executor exit to the current Server session without restarting tools", async () => {
+    const h = await harness();
+    const s = await h.connect();
+    h.crash();
+    expect(s.socket.sent.at(-1)).toMatchObject({ type: "agent.executor_status", state: "EXECUTOR_FAILED" });
+    expect(h.executor.state()).toBe("EXECUTOR_FAILED");
+    expect(h.effects()).toBe(0);
+    s.socket.close();
+    await s.pending;
+    await h.executor.close();
+  });
+
   it("announces capability but sends no new frame to an old Server and retains legacy dispatch", async () => {
     const h = await harness(); const s = await h.connect();
     expect(s.socket.sent[0]).toMatchObject({ capabilities: expect.arrayContaining([OPERATION_RECOVERY_CAPABILITY]) });
@@ -151,7 +164,7 @@ describe("relay operation recovery", () => {
 
   it("uses a stable process bootId with an explicit test/runtime override", async () => {
     const h = await harness(); const bootId = randomUUID();
-    const options = { credential, executor: h.executor, heartbeatIntervalMs: 0 };
+    const options = { identity, credential, executor: h.executor, heartbeatIntervalMs: 0 };
     expect(new RelayClient(options).bootId).toBe(new RelayClient(options).bootId);
     expect(new RelayClient({ ...options, bootId }).bootId).toBe(bootId);
   });
@@ -163,7 +176,7 @@ it("cleans up a socket closed during executor startup without waiting for a lost
     await new Promise<void>((resolve) => { release = resolve; });
     return { listTools: async () => [{ name: "read_file" }], callTool: async () => ({}), close: async () => undefined };
   } });
-  const relay = new RelayClient({ credential, executor, heartbeatIntervalMs: 0,
+  const relay = new RelayClient({ identity, credential, executor, heartbeatIntervalMs: 0,
     refreshToken: async () => ({ accessToken: "test", expiresAt: 99_000, deviceId }), socketFactory: async () => socket });
   const pending = relay.connectOnce(new AbortController().signal);
   await vi.waitFor(() => expect(executor.state()).toBe("EXECUTOR_STARTING"));
@@ -175,7 +188,7 @@ it("cleans up a socket closed during executor startup without waiting for a lost
 it("removes listeners when executor startup fails", async () => {
   const socket = new Socket();
   const executor = new ExecutorManager({ startClient: async () => { throw new Error("startup failed"); } });
-  const relay = new RelayClient({ credential, executor, heartbeatIntervalMs: 0,
+  const relay = new RelayClient({ identity, credential, executor, heartbeatIntervalMs: 0,
     refreshToken: async () => ({ accessToken: "test", expiresAt: 99_000, deviceId }), socketFactory: async () => socket });
   await expect(relay.connectOnce(new AbortController().signal)).rejects.toThrow("startup failed");
   expect(socket.listenerCount("message")).toBe(0); expect(socket.readyState).toBe(3);
@@ -184,7 +197,7 @@ it("removes listeners when executor startup fails", async () => {
 it("does not replace a newer session with a stale token refresh", async () => {
   const h = await harness(); const sockets: Socket[] = []; let release!: (token: { accessToken: string; expiresAt: number; deviceId: string }) => void;
   let refreshes = 0;
-  const relay = new RelayClient({ credential, executor: h.executor, heartbeatIntervalMs: 0,
+  const relay = new RelayClient({ identity, credential, executor: h.executor, heartbeatIntervalMs: 0,
     refreshToken: async () => { if (++refreshes === 1) return new Promise((resolve) => { release = resolve; }); return { accessToken: "new", expiresAt: 99_000, deviceId }; },
     socketFactory: async () => { const socket = new Socket(); sockets.push(socket); return socket; } });
   const stale = relay.connectOnce(new AbortController().signal); const current = relay.connectOnce(new AbortController().signal);
@@ -200,7 +213,7 @@ it("retains one completed effect across failed refresh and handshake reconnect a
   let refreshes = 0; let connections = 0; let sessions = 0;
   const sockets: Socket[] = []; const sleeps: number[] = [];
   let operation!: OperationCallMessage;
-  const relay = new RelayClient({ credential, executor: h.executor, heartbeatIntervalMs: 0, now: () => 1_000, random: () => 0.5,
+  const relay = new RelayClient({ identity, credential, executor: h.executor, heartbeatIntervalMs: 0, now: () => 1_000, random: () => 0.5,
     refreshToken: async () => { if (++refreshes === 2) throw new TypeError("fetch failed"); return { accessToken: "test", expiresAt: 99_000, deviceId }; },
     socketFactory: async () => { if (++connections === 2) throw Object.assign(new Error("handshake disconnected"), { code: "ECONNRESET" }); const socket = new Socket(); sockets.push(socket); return socket; },
     sleep: async (ms) => { sleeps.push(ms); },
@@ -225,21 +238,21 @@ it("retains one completed effect across failed refresh and handshake reconnect a
 
 it.each([new DeviceCredentialRejectedError(), new ServerRequestError(401, null), new ServerRequestError(403, null), new ServerRequestError(400, null)])("keeps rejected credentials and permanent HTTP errors terminal", async (error) => {
   const h = await harness(); let calls = 0;
-  const relay = new RelayClient({ credential, executor: h.executor, heartbeatIntervalMs: 0,
+  const relay = new RelayClient({ identity, credential, executor: h.executor, heartbeatIntervalMs: 0,
     refreshToken: async () => { calls++; throw error; }, sleep: async () => { throw new Error("unexpected retry"); } });
   await expect(relay.run(new AbortController().signal)).rejects.toBe(error); expect(calls).toBe(1);
 });
 
 it.each([408, 429, 503])("retries temporary refresh HTTP %s without closing the executor", async (status) => {
   const h = await harness(); const stop = new AbortController(); let calls = 0;
-  const relay = new RelayClient({ credential, executor: h.executor, heartbeatIntervalMs: 0,
+  const relay = new RelayClient({ identity, credential, executor: h.executor, heartbeatIntervalMs: 0,
     refreshToken: async () => { if (++calls === 1) throw new ServerRequestError(status, null); stop.abort(); return { accessToken: "test", expiresAt: 99_000, deviceId }; }, sleep: async () => undefined });
   await relay.run(stop.signal); expect(calls).toBe(2); expect(h.executor.state()).toBe("READY");
 });
 
 it("aborts a reconnect backoff promptly", async () => {
   const h = await harness(); const stop = new AbortController(); let calls = 0;
-  const relay = new RelayClient({ credential, executor: h.executor, heartbeatIntervalMs: 0,
+  const relay = new RelayClient({ identity, credential, executor: h.executor, heartbeatIntervalMs: 0,
     refreshToken: async () => { calls++; throw new TypeError("fetch failed"); } });
   const running = relay.run(stop.signal);
   await vi.waitFor(() => expect(calls).toBe(1)); stop.abort(); await running;
@@ -259,7 +272,7 @@ it("contains an established socket error and preserves running work for the next
 it("keeps executor startup TypeErrors terminal instead of classifying them as network errors", async () => {
   const socket = new Socket(); const failure = new TypeError("executor initialization failed"); let starts = 0;
   const executor = new ExecutorManager({ startClient: async () => { starts++; throw failure; } });
-  const relay = new RelayClient({ credential, executor, heartbeatIntervalMs: 0,
+  const relay = new RelayClient({ identity, credential, executor, heartbeatIntervalMs: 0,
     refreshToken: async () => ({ accessToken: "test", expiresAt: 99_000, deviceId }), socketFactory: async () => socket,
     sleep: async () => { throw new Error("unexpected retry"); } });
   await expect(relay.run(new AbortController().signal)).rejects.toBe(failure); expect(starts).toBe(1);
@@ -267,7 +280,7 @@ it("keeps executor startup TypeErrors terminal instead of classifying them as ne
 
 it.each([new Error("factory failed"), new TypeError("invalid socket configuration")])("keeps socket factory programming failures terminal", async (failure) => {
   const h = await harness(); let connections = 0;
-  const relay = new RelayClient({ credential, executor: h.executor, heartbeatIntervalMs: 0,
+  const relay = new RelayClient({ identity, credential, executor: h.executor, heartbeatIntervalMs: 0,
     refreshToken: async () => ({ accessToken: "test", expiresAt: 99_000, deviceId }),
     socketFactory: async () => { connections++; throw failure; },
     sleep: async () => { throw new Error("unexpected retry"); } });
@@ -277,7 +290,7 @@ it.each([new Error("factory failed"), new TypeError("invalid socket configuratio
 
 it.each([401, 403, 404])("keeps handshake HTTP %s terminal", async (status) => {
   const h = await harness(); const failure = new ServerRequestError(status, null);
-  const relay = new RelayClient({ credential, executor: h.executor, heartbeatIntervalMs: 0,
+  const relay = new RelayClient({ identity, credential, executor: h.executor, heartbeatIntervalMs: 0,
     refreshToken: async () => ({ accessToken: "test", expiresAt: 99_000, deviceId }),
     socketFactory: async () => { throw failure; },
     sleep: async () => { throw new Error("unexpected retry"); } });
@@ -287,7 +300,7 @@ it.each([401, 403, 404])("keeps handshake HTTP %s terminal", async (status) => {
 it.each([new ServerRequestError(408, null), new ServerRequestError(429, null), new ServerRequestError(503, null),
   Object.assign(new Error("network reset"), { code: "ECONNRESET" })])("retries temporary handshake failures", async (failure) => {
   const h = await harness(); const stop = new AbortController(); let connections = 0;
-  const relay = new RelayClient({ credential, executor: h.executor, heartbeatIntervalMs: 0,
+  const relay = new RelayClient({ identity, credential, executor: h.executor, heartbeatIntervalMs: 0,
     refreshToken: async () => ({ accessToken: "test", expiresAt: 99_000, deviceId }),
     socketFactory: async () => {
       if (++connections === 1) throw failure;
@@ -311,7 +324,7 @@ it("keeps a malformed 101 handshake from the actual WebSocket factory terminal",
   try {
     const address = server.address();
     if (address === null || typeof address === "string") throw new Error("Expected a TCP fixture");
-    const relay = new RelayClient({
+    const relay = new RelayClient({ identity,
       credential: { ...credential, serverUrl: `http://localhost:${address.port}` },
       executor: h.executor, heartbeatIntervalMs: 0,
       refreshToken: async () => ({ accessToken: "test", expiresAt: 99_000, deviceId }),
@@ -335,7 +348,7 @@ it("retries a network close during the actual WebSocket handshake", async () => 
   try {
     const address = server.address();
     if (address === null || typeof address === "string") throw new Error("Expected a TCP fixture");
-    const relay = new RelayClient({
+    const relay = new RelayClient({ identity,
       credential: { ...credential, serverUrl: `http://localhost:${address.port}` },
       executor: h.executor, heartbeatIntervalMs: 0,
       refreshToken: async () => ({ accessToken: "test", expiresAt: 99_000, deviceId }),
@@ -358,7 +371,7 @@ it("restarts a stalled local executor, announces states and keeps old operation 
   } });
   await executor.start();
   const socket = new Socket();
-  const relay = new RelayClient({ credential, executor, heartbeatIntervalMs: 0,
+  const relay = new RelayClient({ identity, credential, executor, heartbeatIntervalMs: 0,
     stalledOperationTimeoutMs: 20, now: () => 1_000,
     refreshToken: async () => ({ accessToken: "test", expiresAt: 999999, deviceId }),
     socketFactory: async () => socket,
@@ -393,7 +406,7 @@ it("keeps Relay non-ready when a stalled executor cannot confirm shutdown", asyn
   } });
   await executor.start();
   const socket = new Socket();
-  const relay = new RelayClient({ credential, executor, heartbeatIntervalMs: 0,
+  const relay = new RelayClient({ identity, credential, executor, heartbeatIntervalMs: 0,
     stalledOperationTimeoutMs: 20, now: () => 1_000,
     refreshToken: async () => ({ accessToken: "test", expiresAt: 999999, deviceId }),
     socketFactory: async () => socket,
@@ -428,7 +441,7 @@ it("reports STARTING only after a stalled executor closes, then reports READY", 
   } });
   await executor.start();
   const socket = new Socket();
-  const relay = new RelayClient({ credential, executor, heartbeatIntervalMs: 0,
+  const relay = new RelayClient({ identity, credential, executor, heartbeatIntervalMs: 0,
     stalledOperationTimeoutMs: 20, now: () => 1_000,
     refreshToken: async () => ({ accessToken: "test", expiresAt: 999999, deviceId }),
     socketFactory: async () => socket,

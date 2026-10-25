@@ -16,4 +16,16 @@ function stop() {
 process.once("SIGINT", stop);
 process.once("SIGTERM", stop);
 
-await runAgentConnect(command.serverUrl, controller.signal);
+try {
+  await runAgentConnect(command.serverUrl, controller.signal);
+} catch (error) {
+  // Runtime callers retain the original causes. CLI diagnostics must not let
+  // Node recursively print arbitrary upstream payloads from errors or causes.
+  console.error(error instanceof AggregateError
+    ? "Agent stopped after an initialization or shutdown failure. Subprocess shutdown could not be confirmed."
+    : "Agent connection failed. Check device authorization, network, and the packaged executor.");
+  process.exitCode = 1;
+} finally {
+  process.removeListener("SIGINT", stop);
+  process.removeListener("SIGTERM", stop);
+}
