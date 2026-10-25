@@ -143,7 +143,7 @@ it("does not start a replacement after the old executor reports an unconfirmed s
   expect(created).toBe(1);
 });
 
-it("waits for an invalidated in-progress startup before launching the replacement", async () => {
+it("rejects replacement while an invalidated factory has no cleanup handle, then recovers after its late return", async () => {
   const entered = Promise.withResolvers<void>();
   let release!: () => void;
   const old = fakeClient();
@@ -152,16 +152,30 @@ it("waits for an invalidated in-progress startup before launching the replacemen
     if (++started === 1) { entered.resolve(); await new Promise<void>(resolve => { release = resolve; }); }
     return started === 1 ? old : fakeClient();
   }});
-  const pendingStart = manager.start();
+  let startupFailure: unknown;
+  const pendingStart = manager.start().catch((error: unknown) => { startupFailure = error; });
   await entered.promise;
-  const replacement = manager.restart();
-  await Promise.resolve();
-  expect(started).toBe(1);
-  release();
-  await Promise.all([pendingStart, replacement]);
-  expect(old.closeCalls).toBe(1);
-  expect(started).toBe(2);
-  expect(manager.state()).toBe("READY");
+  let replacementFailure: unknown;
+  const replacement = manager.restart().catch((error: unknown) => { replacementFailure = error; });
+  try {
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(startupFailure).toBeInstanceOf(Error);
+    expect(replacementFailure).toBeInstanceOf(Error);
+    expect(started).toBe(1);
+    await expect(manager.start()).rejects.toThrow(/shutdown|pending/i);
+    release();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(old.closeCalls).toBe(1);
+    expect(started).toBe(1);
+    expect(manager.state()).toBe("EXECUTOR_FAILED");
+    await manager.restart();
+    expect(started).toBe(2);
+    expect(manager.state()).toBe("READY");
+  } finally {
+    release();
+    await Promise.all([pendingStart, replacement]);
+    await manager.close();
+  }
 });
 
 it("fences recovery when a superseded startup cannot close its subprocess", async () => {
@@ -284,21 +298,31 @@ describe("client ownership across failed and invalidated initialization", () => 
     expect(client.closeCalls).toBe(2);
   });
 
-  it("waits for a pending factory before shutdown is confirmed", async () => {
+  it("rejects shutdown confirmation for an unregistered pending factory and cleans up its late return", async () => {
     const created = Promise.withResolvers<ExecutorClient>();
     const entered = Promise.withResolvers<void>();
     const client = fakeClient();
     const manager = new ExecutorManager({ startClient: () => { entered.resolve(); return created.promise; } });
-    const startup = manager.start();
+    let startupFailure: unknown;
+    const startup = manager.start().catch((error: unknown) => { startupFailure = error; });
     await entered.promise;
     let stopped = false;
-    const shutdown = manager.close().then(() => { stopped = true; });
-    await Promise.resolve();
-    expect(stopped).toBe(false);
-    created.resolve(client);
-    await Promise.all([startup, shutdown]);
-    expect(client.closeCalls).toBe(1);
-    expect(manager.state()).toBe("OFFLINE");
+    let shutdownFailure: unknown;
+    const shutdown = manager.close().then(() => { stopped = true; }, (error: unknown) => { shutdownFailure = error; });
+    try {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(stopped).toBe(false);
+      expect(startupFailure).toBeInstanceOf(Error);
+      expect(shutdownFailure).toBeInstanceOf(Error);
+      created.resolve(client);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(client.closeCalls).toBe(1);
+      expect(manager.state()).toBe("OFFLINE");
+    } finally {
+      created.resolve(client);
+      await Promise.all([startup, shutdown]);
+      await manager.close();
+    }
   });
 
   it("cannot publish READY if the child closes while tools are being listed", async () => {

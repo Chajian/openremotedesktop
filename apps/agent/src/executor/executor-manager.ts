@@ -7,7 +7,7 @@ export type ExecutorTool = {
 };
 
 export interface ExecutorClient {
-  listTools(): Promise<ExecutorTool[]>;
+  listTools(options?: { signal?: AbortSignal }): Promise<ExecutorTool[]>;
   callTool(name: string, args: unknown, options?: { timeoutMs: number }): Promise<unknown>;
   close(): Promise<void>;
   onClose?(handler: () => void): void;
@@ -15,16 +15,28 @@ export interface ExecutorClient {
 
 export type ExecutorManagerOptions = {
   /** Register ownership before awaiting a factory's subprocess handshake. */
-  startClient: (onCreated: (client: ExecutorClient) => void) => Promise<ExecutorClient>;
+  startClient: (onCreated: (client: ExecutorClient) => void, signal: AbortSignal) => Promise<ExecutorClient>;
   onState?: (state: DeviceState) => void;
   validateTools?: (tools: readonly ExecutorTool[]) => void;
+};
+
+type ExecutorOwnership = {
+  client: ExecutorClient;
+  closing: Promise<void> | undefined;
+};
+
+type Initialization = {
+  controller: AbortController;
+  ownership: ExecutorOwnership | undefined;
+  factorySettled: boolean;
+  finished: boolean;
 };
 
 export class ExecutorManager {
   private currentState: DeviceState = "AUTHENTICATED";
   private client: ExecutorClient | null = null;
   // Readiness can be revoked synchronously; ownership ends only after close resolves.
-  private ownedClient: ExecutorClient | null = null;
+  private ownedClient: ExecutorOwnership | null = null;
   private drainingClient: ExecutorClient | undefined;
   private startClient: ExecutorManagerOptions["startClient"];
   private readonly onState: (state: DeviceState) => void;
@@ -35,6 +47,8 @@ export class ExecutorManager {
   private closing: Promise<void> | undefined;
   private lifecycle: Promise<void> = Promise.resolve();
   private unconfirmedShutdown: Error | undefined;
+  private initializing: Initialization | undefined;
+  private pendingFactory: { initialization: Initialization; error: Error } | undefined;
   private readonly invalidationListeners = new Set<() => void>();
   private readonly stateListeners = new Set<(state: DeviceState) => void>();
 
@@ -64,22 +78,35 @@ export class ExecutorManager {
 
   private assertShutdownConfirmed(): void {
     if (this.unconfirmedShutdown) throw this.unconfirmedShutdown;
+    if (this.pendingFactory) throw this.pendingFactory.error;
   }
 
   private async closeOwnedClient(): Promise<void> {
-    const client = this.ownedClient;
-    if (!client) return;
-    this.drainingClient = client;
-    try {
-      await client.close();
-      this.ownedClient = null;
-      this.unconfirmedShutdown = undefined;
-    } catch (cause) {
-      this.unconfirmedShutdown = new Error("Previous executor shutdown could not be confirmed", { cause });
-      throw this.unconfirmedShutdown;
-    } finally {
-      this.drainingClient = undefined;
+    if (this.pendingFactory) throw this.pendingFactory.error;
+    if (this.ownedClient) await this.closeClient(this.ownedClient);
+  }
+
+  private closeClient(ownership: ExecutorOwnership): Promise<void> {
+    if (ownership.closing === undefined) {
+      ownership.closing = Promise.resolve().then(async () => {
+        const { client } = ownership;
+        this.drainingClient = client;
+        try {
+          await client.close();
+          if (this.ownedClient === ownership) {
+            this.ownedClient = null;
+            this.unconfirmedShutdown = undefined;
+          }
+        } catch (cause) {
+          const error = new Error("Previous executor shutdown could not be confirmed", { cause });
+          if (this.ownedClient === ownership) this.unconfirmedShutdown = error;
+          throw error;
+        } finally {
+          if (this.drainingClient === client) this.drainingClient = undefined;
+        }
+      });
     }
+    return ownership.closing;
   }
 
   private enqueue(operation: () => Promise<void>): Promise<void> {
@@ -118,54 +145,111 @@ export class ExecutorManager {
   }
 
   private async initialize(epoch: number): Promise<void> {
-    this.setState("EXECUTOR_STARTING");
-    if (epoch !== this.epoch) return;
-    let published = false;
-    let failed = false;
-    let failure: unknown;
+    const initialization: Initialization = {
+      controller: new AbortController(), ownership: undefined, factorySettled: true, finished: false,
+    };
+    this.initializing = initialization;
+    const { signal } = initialization.controller;
     const onCreated = (client: ExecutorClient) => {
-      if (this.ownedClient === client) return;
-      if (this.ownedClient) throw new Error("Executor factory registered more than one client");
-      this.ownedClient = client;
+      // Keep the attempt's identity after close so a late factory result cannot
+      // reclaim a closed client or overwrite ownership of its replacement.
+      if (initialization.ownership?.client === client) return;
+      if (initialization.ownership || this.ownedClient) throw new Error("Executor factory registered more than one client");
+      const ownership: ExecutorOwnership = { client, closing: undefined };
+      initialization.ownership = ownership;
+      this.ownedClient = ownership;
       // This also observes exits during the factory's handshake.
       client.onClose?.(() => {
-        if (this.ownedClient === client && this.drainingClient !== client && epoch === this.epoch) {
+        if (this.ownedClient === ownership && this.drainingClient !== client && epoch === this.epoch) {
           this.markCrashed();
         }
       });
+      if (initialization.finished) {
+        // The queue has already left this cancelled factory. Clean only the
+        // client it eventually hands over, never whichever client is current.
+        void this.enqueue(() => this.closeClient(ownership)).catch(() => undefined);
+        if (this.pendingFactory?.initialization === initialization) this.pendingFactory = undefined;
+      }
     };
     try {
-      const client = await this.startClient(onCreated);
-      onCreated(client);
-      if (epoch === this.epoch) {
-        const tools = await client.listTools();
+      this.setState("EXECUTOR_STARTING");
+      if (epoch !== this.epoch) return;
+      let published = false;
+      let failed = false;
+      let failure: unknown;
+      try {
+        initialization.factorySettled = false;
+        let factory: Promise<ExecutorClient>;
+        try {
+          factory = this.startClient(onCreated, signal);
+        } catch (error) {
+          initialization.factorySettled = true;
+          throw error;
+        }
+        const observedFactory = factory.then(client => {
+          initialization.factorySettled = true;
+          onCreated(client);
+          return client;
+        }, error => {
+          initialization.factorySettled = true;
+          if (this.pendingFactory?.initialization === initialization) this.pendingFactory = undefined;
+          throw error;
+        });
+        const client = await this.waitForInitialization(observedFactory, signal);
         if (epoch === this.epoch) {
-          if (tools.length === 0) throw new Error("Desktop Commander exposed no tools");
-          this.validateTools(tools);
+          const tools = await this.waitForInitialization(client.listTools({ signal }), signal);
           if (epoch === this.epoch) {
-            this.client = client;
-            published = true;
-            this.setState("READY");
+            if (tools.length === 0) throw new Error("Desktop Commander exposed no tools");
+            this.validateTools(tools);
+            if (epoch === this.epoch) {
+              this.client = client;
+              published = true;
+              this.setState("READY");
+            }
+          }
+        }
+      } catch (error) {
+        if (!signal.aborted) {
+          failed = true;
+          failure = error;
+          if (epoch === this.epoch) {
+            this.client = null;
+            this.setState("EXECUTOR_FAILED");
           }
         }
       }
-    } catch (error) {
-      failed = true;
-      failure = error;
-      if (epoch === this.epoch) {
-        this.client = null;
-        this.setState("EXECUTOR_FAILED");
+      if (!published) {
+        if (!initialization.ownership && !initialization.factorySettled) {
+          const error = new Error("Previous executor shutdown could not be confirmed: client factory is still pending");
+          this.pendingFactory = { initialization, error };
+          throw error;
+        }
+        try {
+          if (initialization.ownership) await this.closeClient(initialization.ownership);
+        } catch (shutdownError) {
+          if (failed) throw new AggregateError([failure, shutdownError], "Executor initialization failed and shutdown could not be confirmed");
+          throw shutdownError;
+        }
       }
+      if (failed) throw failure;
+    } finally {
+      initialization.finished = true;
+      if (this.initializing === initialization) this.initializing = undefined;
     }
-    if (!published) {
-      try {
-        await this.closeOwnedClient();
-      } catch (shutdownError) {
-        if (failed) throw new AggregateError([failure, shutdownError], "Executor initialization failed and shutdown could not be confirmed");
-        throw shutdownError;
-      }
+  }
+
+  private async waitForInitialization<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
+    const stopped = Promise.withResolvers<never>();
+    const abort = () => { stopped.reject(signal.reason); };
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    try {
+      // Passing a signal alone cannot release the queue if an injected factory
+      // or client ignores cancellation. Both late success and rejection remain observed.
+      return await Promise.race([pending, stopped.promise]);
+    } finally {
+      signal.removeEventListener("abort", abort);
     }
-    if (failed) throw failure;
   }
 
   async restart(): Promise<void> {
@@ -203,7 +287,13 @@ export class ExecutorManager {
 
   async close(): Promise<void> {
     if (this.closing) return this.closing;
-    const shutdown = this.enqueue(() => this.closeOwnedClient());
+    const retry = this.unconfirmedShutdown;
+    const shutdown = this.enqueue(() => {
+      // Only a later explicit close may retry a failure already reported to its
+      // caller. A close queued behind cancellation shares that cleanup result.
+      if (retry && retry === this.unconfirmedShutdown && this.ownedClient) this.ownedClient.closing = undefined;
+      return this.closeOwnedClient();
+    });
     this.closing = shutdown;
     this.invalidateClient(this.currentState === "REVOKED" ? "REVOKED" : "OFFLINE");
     try {
@@ -216,6 +306,7 @@ export class ExecutorManager {
   private invalidateClient(state: DeviceState): void {
     this.epoch++;
     this.client = null;
+    this.initializing?.controller.abort();
     this.setState(state);
     for (const listener of this.invalidationListeners) this.notifyObserver(listener);
   }
