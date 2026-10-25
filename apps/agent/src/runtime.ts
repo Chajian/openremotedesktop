@@ -55,23 +55,36 @@ export async function runAgentConnect(
   signal: AbortSignal,
   options: AgentConnectOptions = {},
 ): Promise<void> {
+  if (signal.aborted) return;
   const store = options.store ?? createCredentialStore({ serverUrl });
   const io = options.io ?? defaultPairingUi(serverUrl);
   const ensureCredential =
     options.ensureCredential ?? ensureDeviceCredential;
   const credential = await ensureCredential(serverUrl, store, io);
+  if (signal.aborted) return;
   const executor =
     options.createExecutor?.() ??
     new ExecutorManager({
       validateTools: assertDesktopCommanderCatalog,
-      startClient: (onCreated) => DesktopCommanderClient.start({
+      startClient: (onCreated, startupSignal) => DesktopCommanderClient.start({
         onCreated,
+        signal: startupSignal,
         clientInfo: { name: "open-desktop-remote-agent", version: agentRelease.version },
       }),
     });
+  // Stop must reach an owned executor even while Relay is waiting for its
+  // initialization. Abort and final unwinding share one observed close result.
+  let shutdown: Promise<void> | undefined;
+  const shutdownOnce = () => shutdown ??= Promise.resolve().then(() => executor.close());
+  const stop = () => {
+    // Observe the rejection now; finally below still awaits the original result.
+    void shutdownOnce().catch(() => undefined);
+  };
+  signal.addEventListener("abort", stop, { once: true });
   let failed = false;
   let failure: unknown;
   try {
+    if (signal.aborted) { stop(); return; }
     const relay =
       options.createRelay?.(credential, executor) ??
       new RelayClient({ credential, executor, identity: AGENT_RUNTIME_IDENTITY });
@@ -81,8 +94,9 @@ export async function runAgentConnect(
     failure = error;
     throw error;
   } finally {
+    signal.removeEventListener("abort", stop);
     try {
-      await executor.close();
+      await shutdownOnce();
     } catch (shutdownError) {
       if (failed) throw new AggregateError([failure, shutdownError], "Agent failed and executor shutdown could not be confirmed");
       throw shutdownError;

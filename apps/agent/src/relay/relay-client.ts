@@ -111,6 +111,7 @@ async function defaultWaitForClose(
   await new Promise<void>((resolve) => {
     const done = () => {
       signal.removeEventListener("abort", abort);
+      socket.off("close", done);
       resolve();
     };
     const abort = () => {
