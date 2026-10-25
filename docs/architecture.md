@@ -72,20 +72,38 @@ The Agent does not know whether the upstream client is ChatGPT, Claude, Cursor o
 
 `runtime.ts` assembles the release/platform/executor identity and injects it into
 `RelayClient`. Relay does not import the concrete adapter or its version constant.
+Its `RelayExecutor` interface describes only startup, recovery, calls and lifecycle
+events; runtime retains responsibility for final executor shutdown.
 `ExecutorManager` separately tracks call readiness and physical client ownership:
 startup/restart/close are serialized, and invalidation revokes calls immediately
 without discarding the cleanup handle. A failed close retains that handle and
 blocks replacement until an explicit cleanup retry confirms shutdown.
 
 Initialization has a separate cancellation signal, shared by the client factory
-and tool discovery. Invalidating an attempt aborts its pending work immediately;
-the lifecycle queue then closes the exact client registered by that attempt.
+and tool discovery. Deliberate stop, replacement and protocol incompatibility
+cancel pending initialization; an unexpected close instead releases the manager's
+wait as a failure without aborting the SDK's own error propagation. The first
+observed failure or deliberate cancellation determines the attempt's outcome.
+Required cleanup can expose the original factory or tool-discovery rejection,
+which takes precedence over a generic unexpected-close diagnostic. A factory
+that withholds its error beyond cleanup cannot delay shutdown indefinitely;
+that attempt rejects with the close failure and ignores later diagnostic changes.
+The lifecycle queue closes the exact client registered by the attempt.
 Factories must transfer ownership before awaiting their handshake. A cancelled
 factory that has not yet registered a client causes a prompt, explicit shutdown
 failure and blocks replacement until its late result is cleaned up or it rejects.
 Epoch checks prevent cancelled initialization and reentrant callbacks from
 publishing stale readiness or state. Runtime stop and final unwinding await the
 same shutdown result, without retrying a failed close implicitly.
+
+Runtime also passes its stop signal through credential pairing, token refresh,
+HTTP response-body consumption and Relay connection establishment. Each network
+module releases its own requests, polling timers and sockets; Relay waits for
+physical socket closure even when an injected close waiter ignores cancellation.
+Stopping preserves saved credentials and does not trigger another poll, reconnect
+or executor startup. Unrelated startup errors remain failures when stop races
+with them; local MCP initialization failure ends the connection instead of
+leaving a failed executor attached to an idle heartbeat loop.
 
 The adapter owns its native `ChildProcess` through a small stdio transport using
 the MCP SDK's public framing APIs. It drains stderr without logging tool data,

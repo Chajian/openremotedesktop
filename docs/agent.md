@@ -75,9 +75,28 @@ authority for recycling a stalled executor; the operation stays
 is a completed business failure, not an executor failure. Legacy calls that do
 not negotiate operation recovery still use their existing SDK timeout behavior.
 
-Retryable network/handshake and token-refresh transport failures also use this
+Retryable network, relay WebSocket handshake and token-refresh transport failures use this
 backoff. Rejected credentials and incompatible protocol remain terminal. Reconnect
 does not resend a previously dispatched tool call.
+
+A local MCP initialization refusal, unexpected subprocess exit or tool-discovery
+failure ends startup with an error after owned cleanup. It does not leave the
+Agent sending heartbeats with an unusable executor or automatically retry the
+failed initialization. Runtime callers retain the original startup error when
+available; the CLI prints a sanitized diagnostic and exits unsuccessfully.
+
+## Stopping
+
+Press Ctrl+C in the Agent terminal to stop it. The stop signal cancels pending
+pairing requests and polling waits, token refresh (including an unfinished
+response body), WebSocket establishment and local MCP initialization. Relay closes
+its owned socket, and runtime waits for the executor's existing cleanup result.
+An unresponsive relay peer cannot hold shutdown open by withholding a WebSocket
+close reply. Saved credentials remain available for the next start.
+
+Stopping does not undo effects of an already dispatched tool call. Unknown
+execution outcomes remain unknown and are never automatically replayed. An
+unconfirmed executor shutdown remains an error and prevents an unsafe replacement.
 
 ## Desktop Commander
 
