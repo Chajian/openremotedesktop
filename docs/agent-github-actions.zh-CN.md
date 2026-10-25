@@ -10,6 +10,10 @@
 
 发布工作流会在三种系统验证打包及 25 个 Desktop Commander 工具，然后在 Ubuntu 上完整测试并通过 npm OIDC 提交暂存包。批准操作仅能在 npm 账号内由本人执行。另一个独立任务从经过验证的 npm tarball 生成 GitHub Release 附件并发布 GitHub Release，不绕过 npm 审核。
 
+安装包验证包含两个互补步骤：`scripts/smoke-packaged-agent.mjs` 直接检查安装后的上游依赖和 25 个工具契约；`scripts/smoke-packaged-agent-runtime.mjs` 启动实际安装后的 Agent CLI，经过 runtime、Relay、ExecutorManager 和自有 stdio 传输层，验证握手版本、工具目录哈希、READY、一次只读工具调用，以及正常退出时直接子进程的物理关闭。第二项使用临时目录、合成凭据和 loopback 服务；仅测试进程通过 preload 隔离原生 Keyring，不读取真实用户凭据。
+
+POSIX 夹具发送真实 SIGTERM；Windows 夹具通过私有测试 IPC 进入 CLI 已有的停止回调，再检查相同的资源释放结果。这不代表 Windows 强制终止信号具有 POSIX 的优雅退出语义。夹具的异常兜底清理会使测试失败，不能代替 Agent 自己的正常关闭。上述包级验收接入现有三平台工作流，不能代替真实用户安装、配对、升级或生产验收。
+
 Agent 发行版本的唯一来源是 `apps/agent/src/version.json`。Relay 握手中的 `agentVersion` 和生成的 npm 包版本读取同一份数据；`node scripts/set-agent-version.mjs X.Y.Z` 同时更新该数据、Windows/macOS 安装脚本及 Server 安装器版本。内部工作区包的 `0.0.0` 不作为发行版本。
 
 本次 Desktop Commander `0.3.1` 升级在源码中准备新的 Agent `0.1.3`，**仍是未发布候选版本**。已发布的 `open-desktop-remote-agent@0.1.2` 依赖 Desktop Commander `0.2.52`，不能用同一个 npm 版本号表示这次升级。准备版本号不会创建标签、暂存 npm 包或上线安装器；`ODR_AGENT_INSTALL_ENABLED` 默认关闭，必须继续等待下述发布与真实设备验收门禁。

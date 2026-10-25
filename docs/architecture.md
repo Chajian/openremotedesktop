@@ -77,10 +77,25 @@ startup/restart/close are serialized, and invalidation revokes calls immediately
 without discarding the cleanup handle. A failed close retains that handle and
 blocks replacement until an explicit cleanup retry confirms shutdown.
 
+Initialization has a separate cancellation signal, shared by the client factory
+and tool discovery. Invalidating an attempt aborts its pending work immediately;
+the lifecycle queue then closes the exact client registered by that attempt.
+Factories must transfer ownership before awaiting their handshake. A cancelled
+factory that has not yet registered a client causes a prompt, explicit shutdown
+failure and blocks replacement until its late result is cleaned up or it rejects.
+Epoch checks prevent cancelled initialization and reentrant callbacks from
+publishing stale readiness or state. Runtime stop and final unwinding await the
+same shutdown result, without retrying a failed close implicitly.
+
 The adapter owns its native `ChildProcess` through a small stdio transport using
 the MCP SDK's public framing APIs. It drains stderr without logging tool data,
 waits for physical close, and retains the same process handle after failed
 termination. It neither signals a saved PID nor accesses private SDK fields.
+During shutdown, every direct-child exit path, including final SIGKILL, releases
+the transport's local stdio ends before awaiting the actual `close` event.
+Inherited pipes held by descendants do not require killing those descendants.
+Exit alone is not a confirmed close; an unconfirmed direct-child shutdown still
+fails and prevents replacement.
 
 ## State ownership
 
