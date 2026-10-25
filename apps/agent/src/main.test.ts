@@ -38,3 +38,41 @@ it.each(["aggregate", "single"])("reports %s shutdown failure without printing n
     }
   }
 });
+
+it("reports a malformed refresh response distinctly without exposing credentials or the response body", async () => {
+  const argv = process.argv;
+  const exitCode = process.exitCode;
+  const signals = ["SIGINT", "SIGTERM"] as const;
+  const listeners = signals.map(signal => new Set(process.listeners(signal)));
+  const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  try {
+    vi.resetModules();
+    const { ServerClient } = await import("./http/server-client.js");
+    const client = new ServerClient(new URL("https://remote.example.com"), async () => new Response(
+      '{"accessToken":"fixture-private-body","expiresAt":"invalid","deviceId":"fixture-device"}',
+      { status: 200, headers: { "content-type": "application/json" } },
+    ));
+    const failure = await client.refreshDeviceAccess("fixture-private-refresh").then(
+      () => new Error("Malformed response was accepted"), (error: unknown) => error,
+    );
+    connect.mockRejectedValueOnce(failure);
+    process.argv = [process.execPath, "agent", "agent", "connect", "--server", "https://remote.example.com"];
+    await expect(import("./main.js")).resolves.toBeDefined();
+    expect(process.exitCode).toBe(1);
+    const diagnostic = JSON.stringify(stderr.mock.calls);
+    expect(diagnostic).toMatch(/invalid.*response/i);
+    expect(diagnostic).not.toMatch(/pair.*again|fixture-private|accessToken/);
+    for (const [index, signal] of signals.entries()) {
+      expect(new Set(process.listeners(signal))).toEqual(listeners[index]);
+    }
+  } finally {
+    process.argv = argv;
+    process.exitCode = exitCode;
+    stderr.mockRestore();
+    for (const [index, signal] of signals.entries()) {
+      for (const listener of process.listeners(signal)) {
+        if (!listeners[index]!.has(listener)) process.removeListener(signal, listener);
+      }
+    }
+  }
+});

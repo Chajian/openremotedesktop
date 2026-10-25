@@ -79,6 +79,14 @@ Retryable network, relay WebSocket handshake and token-refresh transport failure
 backoff. Rejected credentials and incompatible protocol remain terminal. Reconnect
 does not resend a previously dispatched tool call.
 
+Token refresh validates the access token, expiry value and device identity before
+opening the Relay connection. A successful HTTP response containing invalid JSON
+or an invalid token payload is a terminal server-response error, not a credential
+rejection or a retryable network failure. The CLI reports an invalid server
+response without printing the response body or token values; saved credentials
+remain unchanged. HTTP 401/403 still reject credentials, including when their
+error body is malformed. Network I/O failures retain the existing retry policy.
+
 A local MCP initialization refusal, unexpected subprocess exit or tool-discovery
 failure ends startup with an error after owned cleanup. It does not leave the
 Agent sending heartbeats with an unusable executor or automatically retry the

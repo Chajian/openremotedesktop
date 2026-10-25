@@ -6,7 +6,7 @@ import { OPERATION_RECOVERY_CAPABILITY, OPERATION_RECOVERY_NOTICE, type Operatio
 import { ExecutorManager } from "../executor/executor-manager.js";
 import { RelayClient, type RelaySocket } from "./relay-client.js";
 import { DeviceCredentialRejectedError } from "../auth/device-token.js";
-import { ServerRequestError } from "../http/server-client.js";
+import { ServerRequestError, ServerTransportError } from "../http/server-client.js";
 
 const identity = { agentVersion: "test-agent", desktopCommanderVersion: "0.3.1", platform: "linux" } as const;
 const deviceId = randomUUID();
@@ -214,7 +214,7 @@ it("retains one completed effect across failed refresh and handshake reconnect a
   const sockets: Socket[] = []; const sleeps: number[] = [];
   let operation!: OperationCallMessage;
   const relay = new RelayClient({ identity, credential, executor: h.executor, heartbeatIntervalMs: 0, now: () => 1_000, random: () => 0.5,
-    refreshToken: async () => { if (++refreshes === 2) throw new TypeError("fetch failed"); return { accessToken: "test", expiresAt: 99_000, deviceId }; },
+    refreshToken: async () => { if (++refreshes === 2) throw new ServerTransportError(); return { accessToken: "test", expiresAt: 99_000, deviceId }; },
     socketFactory: async () => { if (++connections === 2) throw Object.assign(new Error("handshake disconnected"), { code: "ECONNRESET" }); const socket = new Socket(); sockets.push(socket); return socket; },
     sleep: async (ms) => { sleeps.push(ms); },
     waitForSocketClose: async (socket) => {
@@ -253,7 +253,7 @@ it.each([408, 429, 503])("retries temporary refresh HTTP %s without closing the 
 it("aborts a reconnect backoff promptly", async () => {
   const h = await harness(); const stop = new AbortController(); let calls = 0;
   const relay = new RelayClient({ identity, credential, executor: h.executor, heartbeatIntervalMs: 0,
-    refreshToken: async () => { calls++; throw new TypeError("fetch failed"); } });
+    refreshToken: async () => { calls++; throw new ServerTransportError(); } });
   const running = relay.run(stop.signal);
   await vi.waitFor(() => expect(calls).toBe(1)); stop.abort(); await running;
   expect(calls).toBe(1);
