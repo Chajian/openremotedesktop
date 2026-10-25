@@ -338,7 +338,7 @@ describe("client ownership across failed and invalidated initialization", () => 
     await entered.promise;
     closed?.();
     listed.resolve([{ name: "read_file" }]);
-    await startup;
+    await expect(startup).rejects.toThrow(/closed|initializ/i);
     expect(states).not.toContain("READY");
     expect(manager.state()).toBe("EXECUTOR_FAILED");
     expect(client.closeCalls).toBe(1);
