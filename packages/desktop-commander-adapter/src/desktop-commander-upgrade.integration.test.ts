@@ -12,18 +12,21 @@ const text = (result: CallToolResult) => result.content
 
 // A real, two-page PDF with a font, byte-accurate xref and distinct page text.
 // Keeping the fixture here avoids a browser/PDF-generator installation in CI.
-function pdfFixture(): Buffer {
+function pdfFixture(withImage = false): Buffer {
   const streams = ["FIRST_PAGE_TOKEN", "SECOND_PAGE_TOKEN"].map(
     (token) => `BT /F1 12 Tf 72 720 Td (${token}) Tj ET\n`,
   );
+  if (withImage) streams[0] += "q 24 0 0 24 72 650 cm /Im1 Do Q\n";
+  const image = "ff000000ff000000ffffffff>\n";
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
-    ...[6, 7].map((content) =>
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents ${content} 0 R >>`),
+    ...[6, 7].map((content, index) =>
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> ${withImage && index === 0 ? "/XObject << /Im1 8 0 R >>" : ""} >> /Contents ${content} 0 R >>`),
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     ...streams.map((stream) =>
       `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}endstream`),
+    ...(withImage ? [`<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length ${Buffer.byteLength(image)} >>\nstream\n${image}endstream`] : []),
   ];
   let pdf = "%PDF-1.4\n";
   const offsets = [0];
@@ -158,6 +161,19 @@ describe("Desktop Commander 0.3.1 real stdio upgrade regressions", () => {
     // Preserve and document that behavior rather than inventing a wrapper error.
     expect(text(bad)).toMatch(/Error reading PDF:/);
     expect((await call("get_config", {})).isError).not.toBe(true);
+  }, 30_000);
+
+  it("extracts an embedded PDF image through the actual native sharp dependency", async () => {
+    const path = join(workspace, "包含图片.pdf");
+    await writeFile(path, pdfFixture(true));
+    const result = await call("read_file", { path });
+    expect(result.isError).not.toBe(true);
+    const image = result.content.find(part => part.type === "image");
+    expect(image?.mimeType).toBe("image/webp");
+    const bytes = Buffer.from(image?.data ?? "", "base64");
+    expect(bytes.subarray(0, 4).toString("ascii")).toBe("RIFF");
+    expect(bytes.subarray(8, 12).toString("ascii")).toBe("WEBP");
+    expect(text(result)).toContain("FIRST_PAGE_TOKEN");
   }, 30_000);
 
   it.each([

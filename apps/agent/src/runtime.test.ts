@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DeviceCredential } from "./credentials/credential-store.js";
 import { runAgentConnect } from "./runtime.js";
+import { ExecutorManager } from "./executor/executor-manager.js";
 
 describe("runAgentConnect", () => {
   it("pairs/loads a credential, runs relay, and closes the executor", async () => {
@@ -72,5 +73,61 @@ describe("runAgentConnect", () => {
     ).rejects.toBe(failure);
 
     expect(close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("runtime lifecycle failure paths", () => {
+  const options = {
+    store: { get: async () => null, set: async () => undefined, clear: async () => undefined },
+    io: { showVerification: () => undefined },
+    ensureCredential: async () => ({ serverUrl: "https://remote.example.com/", deviceId: "11111111-1111-4111-8111-111111111111", refreshCredential: "fixture-refresh" }),
+  };
+
+  it("closes an owned executor even when relay construction throws", async () => {
+    let closes = 0;
+    const executor = new ExecutorManager({ startClient: async () => ({
+      listTools: async () => [{ name: "read_file" }],
+      callTool: async () => ({}),
+      close: async () => { closes++; },
+    }) });
+    await executor.start();
+    const failure = new Error("relay construction failed");
+    await expect(runAgentConnect(new URL("https://remote.example.com"), new AbortController().signal, {
+      ...options, createExecutor: () => executor, createRelay: () => { throw failure; },
+    })).rejects.toBe(failure);
+    expect(closes).toBe(1);
+  });
+
+  it("retains both relay and shutdown errors when final cleanup also fails", async () => {
+    const relayFailure = new Error("relay failed");
+    const shutdownFailure = new Error("shutdown failed");
+    const executor = new ExecutorManager({ startClient: async () => ({
+      listTools: async () => [{ name: "read_file" }],
+      callTool: async () => ({}),
+      close: async () => { throw shutdownFailure; },
+    }) });
+    await executor.start();
+    const failure = await runAgentConnect(new URL("https://remote.example.com"), new AbortController().signal, {
+      ...options, createExecutor: () => executor, createRelay: () => ({ run: async () => { throw relayFailure; } }),
+    }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    if (!(failure instanceof AggregateError)) throw new Error("Expected both failures");
+    expect(failure.errors[0]).toBe(relayFailure);
+    expect(failure.errors[1]).toMatchObject({ cause: shutdownFailure });
+  });
+
+  it("cleans up after an incompatibility notice has revoked readiness", async () => {
+    let closes = 0;
+    const executor = new ExecutorManager({ startClient: async () => ({
+      listTools: async () => [{ name: "read_file" }],
+      callTool: async () => ({}),
+      close: async () => { closes++; },
+    }) });
+    await executor.start();
+    await runAgentConnect(new URL("https://remote.example.com"), new AbortController().signal, {
+      ...options, createExecutor: () => executor, createRelay: () => ({ run: async () => { executor.markIncompatible(); } }),
+    });
+    expect(closes).toBe(1);
+    expect(executor.state()).toBe("OFFLINE");
   });
 });

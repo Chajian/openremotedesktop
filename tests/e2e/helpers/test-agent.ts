@@ -2,6 +2,8 @@ import WebSocket from "ws";
 import { DesktopCommanderClient } from "../../../packages/desktop-commander-adapter/src/desktop-commander-client.js";
 import { ExecutorManager } from "../../../apps/agent/src/executor/executor-manager.js";
 import { RelayClient } from "../../../apps/agent/src/relay/relay-client.js";
+import { AGENT_RUNTIME_IDENTITY } from "../../../apps/agent/src/runtime.js";
+import { assertDesktopCommanderCatalog } from "../../../packages/tool-contracts/src/catalog.js";
 import { refreshRelayToken } from "../../../apps/agent/src/auth/device-token.js";
 import type { DeviceCredential } from "../../../apps/agent/src/credentials/credential-store.js";
 import {
@@ -21,12 +23,14 @@ export async function startRealAgent(
   cwd: string,
 ) {
   const executor = new ExecutorManager({
-    startClient: () => DesktopCommanderClient.start({ cwd }),
+    validateTools: assertDesktopCommanderCatalog,
+    startClient: (onCreated) => DesktopCommanderClient.start({ cwd, onCreated }),
   });
   let activeSocket: WebSocket | null = null;
   const relay = new RelayClient({
     credential,
     executor,
+    identity: AGENT_RUNTIME_IDENTITY,
     heartbeatIntervalMs: 250,
     stableConnectionMs: 1_000,
     socketFactory: async (url, accessToken) =>
@@ -63,8 +67,8 @@ export async function startRealAgent(
         runPromise,
         new Promise((resolve) => setTimeout(resolve, 2_000)),
       ]);
-      await executor.close().catch(() => undefined);
-      if (failure && !controller.signal.aborted) throw failure;
+      await executor.close();
+      if (failure) throw failure;
     },
   };
 }
@@ -75,6 +79,7 @@ export async function startFakeAgent(
   options: {
     disconnectOnFirstCall?: boolean;
     responseDelayMs?: number;
+    desktopCommanderVersion?: string;
   } = {},
 ) {
   const token = await refreshRelayToken(credential);
@@ -137,7 +142,7 @@ export async function startFakeAgent(
     agentVersion: "e2e-fake",
     protocolRange: { min: 1, max: 1 },
     platform: "linux",
-    desktopCommanderVersion: "0.3.1",
+    desktopCommanderVersion: options.desktopCommanderVersion ?? "0.3.1",
     capabilities: ["desktop-commander"],
   });
   send({
@@ -150,7 +155,7 @@ export async function startFakeAgent(
     type: "agent.ready",
     protocolVersion: PROTOCOL_VERSION,
     deviceId: credential.deviceId,
-    desktopCommanderVersion: "0.3.1",
+    desktopCommanderVersion: options.desktopCommanderVersion ?? "0.3.1",
     capabilities: ["desktop-commander"],
   });
 

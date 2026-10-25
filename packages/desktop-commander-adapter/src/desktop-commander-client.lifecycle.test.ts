@@ -5,29 +5,30 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/client";
-import type { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import type { OwnedStdioTransport } from "./owned-stdio-transport.js";
 import { DesktopCommanderClient } from "./desktop-commander-client.js";
 
 type Session = {
   child: ChildProcess;
-  transport: StdioClientTransport;
+  transport: OwnedStdioTransport;
   closed: boolean;
   closedPromise: Promise<void>;
 };
 
 const fixture = vi.hoisted(() => ({
   mode: "normal",
+  rejectSignals: false,
   sessions: [] as Session[],
 }));
 
 // Substitute only the executable fixture. Spawning, MCP initialization,
-// signaling, stdio backpressure and child close events use the actual SDK.
-vi.mock("@modelcontextprotocol/client/stdio", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@modelcontextprotocol/client/stdio")>();
+// signaling, stdio backpressure, SDK framing and child close events are real.
+vi.mock("./owned-stdio-transport.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./owned-stdio-transport.js")>();
   return {
     ...actual,
-    StdioClientTransport: class extends actual.StdioClientTransport {
-      constructor(options: ConstructorParameters<typeof actual.StdioClientTransport>[0]) {
+    OwnedStdioTransport: class extends actual.OwnedStdioTransport {
+      constructor(options: ConstructorParameters<typeof actual.OwnedStdioTransport>[0]) {
         super({
           ...options,
           args: [fileURLToPath(new URL("./fixtures/stdio-lifecycle-server.mjs", import.meta.url)), fixture.mode],
@@ -38,7 +39,8 @@ vi.mock("@modelcontextprotocol/client/stdio", async (importOriginal) => {
         const starting = super.start();
         // Test-only observation of the real ChildProcess lets assertions check
         // OS close rather than SDK pid, which becomes null before child exit.
-        const child = Reflect.get(this, "_process") as ChildProcess;
+        const child = Reflect.get(this, "child") as ChildProcess;
+        if (fixture.rejectSignals) vi.spyOn(child, "kill").mockReturnValue(false);
         let resolveClosed!: () => void;
         const session: Session = {
           child,
@@ -61,6 +63,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   const sessions = fixture.sessions.splice(0);
   fixture.mode = "normal";
+  fixture.rejectSignals = false;
   await Promise.all(sessions.map(async (session) => {
     // Drain even when the production regression left stderr backpressured;
     // otherwise Node cannot emit close after the fixture process is killed.
@@ -91,6 +94,15 @@ async function within<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 }
 
 describe("Desktop Commander subprocess lifecycle", () => {
+  it.each(["noise-before-initialize", "invalid-frame-before-initialize"])("preserves SDK recovery after %s before valid MCP data", async mode => {
+    fixture.mode = mode;
+    const client = await DesktopCommanderClient.start();
+    const result = await client.callTool("get_client_info", {});
+    expect(result.isError).not.toBe(true);
+    await client.close();
+    expect(currentSession().closed).toBe(true);
+  }, 10_000);
+
   it("sends the supplied release identity in the actual MCP handshake", async () => {
     const client = await DesktopCommanderClient.start({
       clientInfo: { name: "fixture-release-agent", version: "0.1.3" },
@@ -210,6 +222,20 @@ describe("Desktop Commander subprocess lifecycle", () => {
     await owned!.close();
   }, 10_000);
 
+  it("observes the SDK's detached close rejection after a real rejected handshake", async () => {
+    fixture.mode = "reject-stubborn";
+    fixture.rejectSignals = true;
+    const warning = vi.spyOn(process, "emitWarning").mockImplementation(() => undefined);
+    let owned: DesktopCommanderClient | undefined;
+    await expect(DesktopCommanderClient.start({ onCreated(client) { owned = client; } }))
+      .rejects.toThrow("startup failed and subprocess cleanup was not confirmed");
+    expect(currentSession().closed).toBe(false);
+    expect(warning).toHaveBeenCalled();
+    vi.mocked(currentSession().child.kill).mockRestore();
+    await owned!.close();
+    expect(currentSession().closed).toBe(true);
+  }, 20_000);
+
   it("rejects a mismatched server version and confirms owned child cleanup", async () => {
     fixture.mode = "version-mismatch";
     let owned: DesktopCommanderClient | undefined;
@@ -274,6 +300,22 @@ describe("Desktop Commander subprocess lifecycle", () => {
     expect(session.closed).toBe(true);
     expect(notifications).toBe(1);
   }, 10_000);
+
+  it("retries real termination after initial signals fail without losing the child handle", async () => {
+    fixture.mode = "stubborn";
+    const client = await DesktopCommanderClient.start();
+    const session = currentSession();
+    const kill = vi.spyOn(session.child, "kill").mockReturnValue(false);
+
+    await expect(client.close()).rejects.toThrow(/close was not confirmed/);
+    expect(session.closed).toBe(false);
+    expect(kill).toHaveBeenCalledWith("SIGTERM");
+    expect(kill).toHaveBeenCalledWith("SIGKILL");
+
+    kill.mockRestore();
+    await client.close();
+    expect(session.closed).toBe(true);
+  }, 20_000);
 
   it("does not hide failed startup cleanup from the early owner", async () => {
     const connect = Client.prototype.connect;

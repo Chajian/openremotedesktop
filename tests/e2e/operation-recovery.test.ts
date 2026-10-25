@@ -205,15 +205,20 @@ describe("operation recovery over real MCP and WebSocket transports", () => {
     const credential = await server.pairDevice(cookie, "Shutdown Failure Test");
     let starts = 0;
     let executed = 0;
+    let closeCalls = 0;
+    let failClose = true;
     const agent = startRecoveryAgent(credential, async () => {
       starts++;
       return {
         listTools: async () => [{ name: "read_file" }],
         callTool: async () => { executed++; return new Promise(() => undefined); },
-        close: async () => { throw new Error("simulated close failure"); },
+        close: async () => {
+          closeCalls++;
+          if (failClose) throw new Error("simulated close failure");
+        },
       };
     }, { stalledOperationTimeoutMs: 40 });
-    cleanups.push(() => agent.stop());
+    cleanups.push(async () => { failClose = false; await agent.stop(); });
     const client = await connectMcpClient(server.baseUrl, token);
     cleanups.push(() => client.close());
     await waitFor(() => server.relayRegistry.get(credential.deviceId)?.state === "READY");
@@ -227,6 +232,14 @@ describe("operation recovery over real MCP and WebSocket transports", () => {
     expect(starts).toBe(1);
     expect(executed).toBe(1);
     expect(agent.connections).toBe(1);
+    expect(closeCalls).toBe(1);
+    await expect(agent.stop()).rejects.toThrow("shutdown could not be confirmed");
+    expect(closeCalls).toBe(2);
+    // Remove the injected fault explicitly; final cleanup must retry the
+    // original handle rather than silently forgetting the failed shutdown.
+    failClose = false;
+    await agent.stop();
+    expect(closeCalls).toBe(3);
   });
 
   it("keeps an old Agent on legacy calls and reports the recovery limitation", async () => {

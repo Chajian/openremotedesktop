@@ -14,6 +14,12 @@
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Create Directory",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "openWorldHint": false
     }
   },
   {
@@ -56,6 +62,12 @@
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Edit Block",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -73,6 +85,12 @@
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Force Terminate Process",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -91,6 +109,12 @@
       },
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Get Configuration",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     }
   },
   {
@@ -108,6 +132,12 @@
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Get File Information",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     }
   },
   {
@@ -134,6 +164,12 @@
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Get Search Results",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     }
   },
   {
@@ -158,6 +194,12 @@
       },
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Get Recent Tool Calls",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     }
   },
   {
@@ -168,6 +210,12 @@
       "properties": {},
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Get Usage Statistics",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     }
   },
   {
@@ -178,6 +226,12 @@
       "properties": {},
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Give Feedback",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "openWorldHint": true
     }
   },
   {
@@ -208,6 +262,12 @@
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Send Input to Process",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "openWorldHint": true
     }
   },
   {
@@ -225,6 +285,12 @@
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Kill Process",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -253,6 +319,12 @@
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "List Directory Contents",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     }
   },
   {
@@ -263,6 +335,12 @@
       "properties": {},
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "List Running Processes",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     }
   },
   {
@@ -273,6 +351,12 @@
       "properties": {},
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "List Active Searches",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     }
   },
   {
@@ -283,6 +367,12 @@
       "properties": {},
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "List Terminal Sessions",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     }
   },
   {
@@ -304,6 +394,12 @@
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Move/Rename File",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -350,6 +446,12 @@
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Read File or URL",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": true
     }
   },
   {
@@ -370,6 +472,12 @@
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Read Multiple Files",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     }
   },
   {
@@ -399,6 +507,12 @@
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Read Process Output",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     }
   },
   {
@@ -446,11 +560,17 @@
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Set Configuration Value",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "openWorldHint": false
     }
   },
   {
     "name": "start_process",
-    "description": "\n                        Start a terminal process on the authorized device with intelligent state detection.\n                        \n                        Suitable for shell commands, interactive REPL sessions, data-processing scripts,\n                        programmatic file analysis, and other long-running terminal work.\n                        \n                        Running on Windows. Default shell: powershell.exe.\n        \nWINDOWS-SPECIFIC TROUBLESHOOTING:\n- If Node.js/Python commands fail with \"not recognized\" errors:\n  * Alternative shells include \"cmd\" and \"powershell.exe\"\n  * PowerShell may have execution policy restrictions for some tools\n  * CMD typically has better compatibility with development tools\n  * defaultShell can be changed with set_config_value if needed\n- Windows services and processes use different commands (Get-Process vs ps)\n- Package managers: choco, winget, scoop instead of apt/brew\n- Environment variables: $env:VAR instead of $VAR\n- File permissions work differently than Unix systems\n                        \n                        Examples:\n                        • start_process(\"python3 -i\") → Start an interactive Python REPL\n                        • start_process(\"node -i\") → Start an interactive Node.js REPL\n                        • start_process(\"node:local\") → Run stateless Node.js code on the MCP server\n                        • start_process(\"wc -l /path/file.csv\") → Run a one-shot shell command\n\n                        Interactive process sessions support follow-up input after they are started.\n                        Long-running process sessions expose newly available output while they remain active.\n                        Binary files can be processed with appropriate command-line tools or libraries available\n                        in the selected process environment.\n\n                        SMART DETECTION:\n                        - Detects REPL prompts (>>>, >, $, etc.)\n                        - Identifies when a process is waiting for input\n                        - Recognizes process completion vs timeout\n                        - Early exit prevents unnecessary waiting\n                        \n                        STATES DETECTED:\n                        Process waiting for input (shows prompt)\n                        Process finished execution\n                        Process running (use read_process_output)\n\n                        PERFORMANCE DEBUGGING (verbose_timing parameter):\n                        Set verbose_timing: true to get detailed timing information including:\n                        - Exit reason (early_exit_quick_pattern, early_exit_periodic_check, process_exit, timeout)\n                        - Total duration and time to first output\n                        - Complete timeline of all output events with timestamps\n                        - Which detection mechanism triggered early exit\n\n                        Absolute paths are the most reliable because they do not depend on the current working directory. Paths are automatically normalized regardless of slash direction. Relative paths depend on the current working directory, and tilde paths (~/...) may not resolve in every context. Absolute paths are generally the most reliable.\n                        This command can be referenced as \"DC: ...\" or \"use Desktop Commander to ...\" in your instructions.",
+    "description": "\n                        Start a terminal process on the authorized device with intelligent state detection.\n                        \n                        Suitable for shell commands, interactive REPL sessions, data-processing scripts,\n                        programmatic file analysis, and other long-running terminal work.\n                        \n                        Execution runs on the selected device. Use list_devices or get_device_status to identify its platform, and get_config on that device for its defaultShell, allowedDirectories, and runtime environment. Pass shell explicitly when a command requires a particular shell. Windows, macOS, and Linux use different shells and command syntax; container paths and mounts also belong to the selected device.\n                        Examples:\n                        • start_process(\"python3 -i\") → Start an interactive Python REPL\n                        • start_process(\"node -i\") → Start an interactive Node.js REPL\n                        • start_process(\"node:local\") → Run stateless Node.js code on the MCP server\n                        • start_process(\"wc -l /path/file.csv\") → Run a one-shot shell command\n\n                        Interactive process sessions support follow-up input after they are started.\n                        Long-running process sessions expose newly available output while they remain active.\n                        Binary files can be processed with appropriate command-line tools or libraries available\n                        in the selected process environment.\n\n                        SMART DETECTION:\n                        - Detects REPL prompts (>>>, >, $, etc.)\n                        - Identifies when a process is waiting for input\n                        - Recognizes process completion vs timeout\n                        - Early exit prevents unnecessary waiting\n                        \n                        STATES DETECTED:\n                        Process waiting for input (shows prompt)\n                        Process finished execution\n                        Process running (use read_process_output)\n\n                        PERFORMANCE DEBUGGING (verbose_timing parameter):\n                        Set verbose_timing: true to get detailed timing information including:\n                        - Exit reason (early_exit_quick_pattern, early_exit_periodic_check, process_exit, timeout)\n                        - Total duration and time to first output\n                        - Complete timeline of all output events with timestamps\n                        - Which detection mechanism triggered early exit\n\n                        Absolute paths are the most reliable because they do not depend on the current working directory. Paths are automatically normalized regardless of slash direction. Relative paths depend on the current working directory, and tilde paths (~/...) may not resolve in every context. Absolute paths are generally the most reliable.\n                        This command can be referenced as \"DC: ...\" or \"use Desktop Commander to ...\" in your instructions.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -480,6 +600,12 @@
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Start Terminal Process",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "openWorldHint": true
     }
   },
   {
@@ -547,6 +673,12 @@
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Start Search",
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
     }
   },
   {
@@ -564,6 +696,12 @@
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Stop Search",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "openWorldHint": false
     }
   },
   {
@@ -600,6 +738,12 @@
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Write File",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "openWorldHint": false
     }
   },
   {
@@ -688,6 +832,12 @@
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "title": "Write/Modify PDF",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "openWorldHint": false
     }
   }
 ]

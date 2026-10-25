@@ -1,19 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { DesktopCommanderClient } from "./desktop-commander-client.js";
-import { DESKTOP_COMMANDER_TOOL_MANIFEST } from "@open-desktop-remote/tool-contracts";
+import { buildToolManifest, DESKTOP_COMMANDER_TOOL_MANIFEST, publicToolDescription } from "@open-desktop-remote/tool-contracts";
 
 // Upstream 0.3.1 emits these two environment-dependent mount supplements.
 // Match their exact wording so unrelated description changes remain visible.
-const stableDescription = (description: string | undefined) =>
-  (description ?? "")
-    .replace(
-      /\n\n🐳 (?:CONTAINER|DOCKER|PODMAN|KUBERNETES): Verified mounts for persistent file operations: [^\n]+?\.\nFiles outside verified mounts may not persist after the container stops\./g,
-      "",
-    )
-    .replace(
-      /\n\n🐳 (?:CONTAINER|DOCKER|PODMAN|KUBERNETES): Unverified mount candidates: [^\n]+?\. These paths are inferred from common container directories and may not persist\./g,
-      "",
-    );
+const stableDescription = (description: string | undefined) => publicToolDescription("read_file", description);
 
 describe("catalog path-guidance comparison", () => {
   it.each(["CONTAINER", "DOCKER", "PODMAN", "KUBERNETES"])(
@@ -50,18 +41,11 @@ describe("Desktop Commander stdio compatibility", () => {
       try {
         const tools = await client.listTools();
         const names = new Set(tools.map((tool) => tool.name));
+        for (const tool of tools) expect(tool).toHaveProperty("annotations.readOnlyHint");
 
-        // Upstream start_process descriptions include OS and configured shell.
-        // Compare every executable schema, plus all platform-neutral descriptions.
-        // Ignore only upstream's WSL/container mount-path supplement.
-        // Tool names, schemas and all other descriptions remain strict.
-        const contract = (tool: (typeof tools)[number]) => ({
-          name: tool.name,
-          description: tool.name === "start_process" ? undefined : stableDescription(tool.description),
-          inputSchema: tool.inputSchema,
-        });
-        expect(tools.map(contract).sort((a, b) => a.name.localeCompare(b.name)))
-          .toEqual(DESKTOP_COMMANDER_TOOL_MANIFEST.map(contract));
+        // Compare all names, schemas, metadata and portable descriptions. Only
+        // the explicitly tested runtime context sections are normalized.
+        expect(buildToolManifest(tools)).toEqual(DESKTOP_COMMANDER_TOOL_MANIFEST);
 
         expect(tools.length).toBeGreaterThan(5);
         expect(names.has("read_file")).toBe(true);

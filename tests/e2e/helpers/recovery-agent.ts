@@ -26,6 +26,7 @@ export function startRecoveryAgent(
   const relay = new RelayClient({
     credential,
     executor,
+    identity: { agentVersion: "recovery-fixture", desktopCommanderVersion: "0.3.1", platform: "linux" },
     heartbeatIntervalMs: 250,
     stalledOperationTimeoutMs: options.stalledOperationTimeoutMs,
     socketFactory: async (url, accessToken) => {
