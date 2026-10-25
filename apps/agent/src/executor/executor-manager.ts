@@ -167,6 +167,8 @@ export class ExecutorManager {
       if (initialization.finished) {
         // The queue has already left this cancelled factory. Clean only the
         // client it eventually hands over, never whichever client is current.
+        // closeClient retains both ownership and a failed shutdown result;
+        // subsequent public lifecycle calls report it until explicit cleanup.
         void this.enqueue(() => this.closeClient(ownership)).catch(() => undefined);
         if (this.pendingFactory?.initialization === initialization) this.pendingFactory = undefined;
       }
@@ -304,17 +306,25 @@ export class ExecutorManager {
   }
 
   private invalidateClient(state: DeviceState): void {
-    this.epoch++;
+    const epoch = ++this.epoch;
     this.client = null;
     this.initializing?.controller.abort();
+    // Abort callbacks run synchronously and can issue a newer invalidation.
+    // Never replace that request's state with the state of this older request.
+    if (epoch !== this.epoch) return;
     this.setState(state);
-    for (const listener of this.invalidationListeners) this.notifyObserver(listener);
+    for (const listener of this.invalidationListeners) {
+      if (epoch !== this.epoch) break;
+      this.notifyObserver(listener);
+    }
   }
 
   private setState(state: DeviceState): void {
+    const epoch = this.epoch;
     this.currentState = state;
     this.notifyObserver(() => this.onState(state));
     for (const listener of this.stateListeners) {
+      if (epoch !== this.epoch) break;
       this.notifyObserver(() => listener(state));
     }
   }
