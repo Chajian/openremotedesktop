@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { fork } from "node:child_process";
+import { execFile, fork } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
 
 const install = resolve(process.argv[2] || "dist/agent-install-check");
 const packageRoot = join(install, "node_modules", "open-desktop-remote-agent");
@@ -38,6 +40,7 @@ const fail = (error) => {
 };
 const spawned = new Set();
 const closed = new Set();
+const identities = new Map();
 let isolatedKeyringReads = 0;
 let refreshes = 0;
 let agent;
@@ -56,6 +59,49 @@ const step = (promise, label) => deadline(Promise.race([promise, failed.promise]
 function processAlive(pid) {
   try { process.kill(pid, 0); return true; }
   catch (error) { if (error.code === "ESRCH") return false; throw error; }
+}
+
+const execute = promisify(execFile);
+async function inspectProcess(pid) {
+  assert.ok(Number.isSafeInteger(pid) && pid > 0);
+  const options = { encoding: "utf8", timeout: 5_000, maxBuffer: 16_384, windowsHide: true, env: { ...process.env, LC_ALL: "C" } };
+  if (process.platform === "win32") {
+    const script = `$ErrorActionPreference='Stop'; try{$p=[System.Diagnostics.Process]::GetProcessById(${pid})}catch [System.ArgumentException]{exit 0}; try{if(-not $p.HasExited){ $parent=(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}').ParentProcessId; @{ parent=$parent; identity=$p.StartTime.ToUniversalTime().Ticks.ToString(); state='running' } | ConvertTo-Json -Compress }}finally{$p.Dispose()}`;
+    const { stdout } = await execute("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], options);
+    return stdout.trim() ? JSON.parse(stdout) : null;
+  }
+  let stdout;
+  try {
+    ({ stdout } = await execute("ps", ["-p", String(pid), "-o", "ppid=", "-o", "stat=", "-o", "lstart=", "-o", "args="], options));
+  } catch (error) {
+    if (error.code === 1 && !error.stdout?.trim() && !error.stderr?.trim()) return null;
+    throw error;
+  }
+  const [parent, state, ...rest] = stdout.trim().split(/\s+/);
+  return { parent: Number(parent), state, identity: rest.slice(0, 5).join(" "), command: rest.slice(5).join(" ") };
+}
+
+async function terminateFixtureExecutor(pid, original) {
+  const current = await inspectProcess(pid);
+  // A vanished or replaced PID is not the process this fixture owns.
+  if (!current || current.identity !== original.identity || current.state.startsWith("Z")) return;
+  if (process.platform === "win32") {
+    assert.match(original.identity, /^\d+$/);
+    // Hold a Windows process handle and compare its creation time before kill.
+    const script = `$ErrorActionPreference='Stop'; try{$p=[System.Diagnostics.Process]::GetProcessById(${pid})}catch [System.ArgumentException]{exit 0}; try{$null=$p.Handle; if($p.StartTime.ToUniversalTime().Ticks.ToString() -ne '${original.identity}'){throw 'Fixture process identity changed'}; $p.Kill(); if(-not $p.WaitForExit(5000)){throw 'Fixture executor did not exit'}}finally{$p.Dispose()}`;
+    await execute("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { timeout: 7_000, windowsHide: true });
+  } else {
+    assert.equal(current.command, original.command, "Refusing to signal a changed fixture process");
+    try { process.kill(pid, "SIGKILL"); }
+    catch (error) { if (error.code !== "ESRCH") throw error; }
+  }
+  const until = performance.now() + 5_000;
+  while (performance.now() < until) {
+    const state = await inspectProcess(pid);
+    if (!state || state.identity !== original.identity || state.state.startsWith("Z")) return;
+    await delay(25);
+  }
+  throw new Error("Recorded fixture executor exit could not be confirmed");
 }
 
 const server = createServer((request, response) => {
@@ -103,6 +149,7 @@ websocket.on("connection", connected => {
 });
 
 try {
+  assert.ok((await inspectProcess(process.pid))?.identity, "Fixture process identity inspection must be available");
   await mkdir(workspace);
   await mkdir(join(home, ".open-desktop-remote"), { recursive: true });
   await mkdir(join(home, ".claude-server-commander"), { recursive: true });
@@ -132,7 +179,14 @@ try {
   agent.on("message", message => {
     if (message?.type === "fixture.keyring-isolated") isolatedKeyringReads++;
     else if (message?.type === "fixture.executor-spawn") {
-      spawned.add(message.pid); executorSpawned.resolve(message.pid);
+      spawned.add(message.pid);
+      const identity = inspectProcess(message.pid).then(info => {
+        assert.equal(info?.parent, agent.pid, "Executor must initially belong to this fixture's Agent");
+        return info;
+      });
+      identities.set(message.pid, identity);
+      void identity.catch(fail);
+      executorSpawned.resolve(message.pid);
     } else if (message?.type === "fixture.executor-close") closed.add(message.pid);
   });
   agent.once("close", (code, signal) => {
@@ -149,6 +203,7 @@ try {
   assert.equal(readiness.desktopCommanderVersion, greeting.desktopCommanderVersion);
   assert.match(readiness.toolsHash, /^[a-f0-9]{64}$/);
   const executorPid = await step(executorSpawned.promise, "executor spawn");
+  await step(identities.get(executorPid), "executor identity");
   assert.equal(spawned.size, 1);
   assert.equal(isolatedKeyringReads, 1, "The real system keyring must be intercepted");
   assert.equal(refreshes, 1);
@@ -182,10 +237,19 @@ try {
       await deadline(exit.promise, "failed-fixture cleanup", 10_000);
     } catch (error) {
       cleanupErrors.push(error);
-      agent.kill("SIGKILL");
-      try { await deadline(exit.promise, "forced fixture exit", 5_000); }
-      catch (forcedError) { cleanupErrors.push(forcedError); }
     }
+  }
+  // An unresponsive or abruptly exited Agent may bypass the preload cleanup.
+  // Retire only its identified direct executors before the actual Agent handle.
+  for (const [pid, identity] of identities) {
+    if (closed.has(pid)) continue;
+    try { await terminateFixtureExecutor(pid, await identity); }
+    catch (executorError) { cleanupErrors.push(executorError); }
+  }
+  if (agent && agent.exitCode === null && agent.signalCode === null) {
+    agent.kill("SIGKILL");
+    try { await deadline(exit.promise, "forced fixture exit", 5_000); }
+    catch (forcedError) { cleanupErrors.push(forcedError); }
   }
   for (const client of websocket.clients) client.terminate();
   try { await deadline(new Promise((resolve, reject) => websocket.close(error => error ? reject(error) : resolve())), "loopback websocket cleanup", 5_000); }

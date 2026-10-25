@@ -4,8 +4,15 @@ import childProcess from "node:child_process";
 import { registerHooks, syncBuiltinESMExports } from "node:module";
 import { writeFileSync } from "node:fs";
 
+let pendingReports = 0;
 const report = (message) => {
-  if (process.connected) process.send(message, () => {});
+  if (!process.connected) return;
+  pendingReports++;
+  process.channel?.ref();
+  process.send(message, (error) => {
+    if (error) writeFileSync(process.env.ODR_SMOKE_FORCED_CLEANUP, "fixture observation failed\n");
+    if (--pendingReports === 0) process.channel?.unref();
+  });
 };
 const keyringStub = `export class Entry {
   constructor() {
@@ -63,3 +70,4 @@ process.on("message", (message) => {
 });
 process.channel?.unref();
 process.once("exit", cleanupFailure);
+process.once("disconnect", () => { cleanupFailure(); process.emit("SIGTERM"); });
