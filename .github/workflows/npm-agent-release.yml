@@ -65,8 +65,10 @@ jobs:
         run: pnpm --filter @open-desktop-remote/agent... install --frozen-lockfile
       - name: Verify original upstream files
         run: pnpm upstream:check
-      - name: Agent tests and typecheck
+      - name: Agent and executor regressions and typecheck
         run: |
+          pnpm --filter @open-desktop-remote/tool-contracts test:run
+          pnpm --filter @open-desktop-remote/desktop-commander-adapter test:run
           pnpm --filter @open-desktop-remote/agent test:run
           pnpm --filter @open-desktop-remote/agent typecheck
       - name: Package for npm
