@@ -1,8 +1,8 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
+import type { DeviceState } from "@open-desktop-remote/shared";
 import type { DeviceCredential } from "../credentials/credential-store.js";
-import type { ExecutorManager } from "../executor/executor-manager.js";
-import { RelayClient, type RelaySocket } from "./relay-client.js";
+import { RelayClient, type RelayClientOptions, type RelaySocket } from "./relay-client.js";
 import agentRelease from "../version.json" with { type: "json" };
 
 const identity = { agentVersion: agentRelease.version, desktopCommanderVersion: "0.3.1", platform: "linux" } as const;
@@ -29,22 +29,22 @@ class FakeSocket extends EventEmitter implements RelaySocket {
 }
 
 function fakeExecutor(state: "AUTHENTICATED" | "READY" = "AUTHENTICATED") {
-  let current = state;
+  let current: DeviceState = state;
   return {
     start: vi.fn(async () => {
       current = "READY";
     }),
+    restart: vi.fn(async () => {
+      current = "READY";
+    }),
     state: vi.fn(() => current),
     markIncompatible: vi.fn(() => {
-      current = "INCOMPATIBLE" as never;
+      current = "INCOMPATIBLE";
     }),
-    close: vi.fn(async () => undefined),
-    onStateChanged: () => () => undefined,
-  } as unknown as ExecutorManager & {
-    start: ReturnType<typeof vi.fn>;
-    markIncompatible: ReturnType<typeof vi.fn>;
-    close: ReturnType<typeof vi.fn>;
-  };
+    callTool: vi.fn(async (_name: string, _args: unknown, _options?: { timeoutMs: number }): Promise<unknown> => undefined),
+    onInvalidated: (_listener: () => void) => () => undefined,
+    onStateChanged: (_listener: (state: DeviceState) => void) => () => undefined,
+  } satisfies RelayClientOptions["executor"];
 }
 
 describe("RelayClient", () => {
