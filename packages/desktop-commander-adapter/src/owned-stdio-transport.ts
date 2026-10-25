@@ -90,25 +90,35 @@ export class OwnedStdioTransport implements Transport {
   private async closeProcess(): Promise<void> {
     const child = this.child;
     if (!child) { this.confirmClose(); return; }
-    let failure: unknown;
-    try { child.stdin.end(); } catch (error) { failure = error; }
-    if (await this.waitForClose()) return;
-    for (const signal of ["SIGTERM", "SIGKILL"] as const) {
-      // The actual ChildProcess handle prevents signaling a recycled PID.
-      if (child.exitCode === null && child.signalCode === null) {
-        try {
-          if (!child.kill(signal)) failure = new Error(`Desktop Commander ${signal} was not delivered`);
-        } catch (error) { failure = error; }
-      } else {
-        // A descendant may still hold inherited pipes after this child exits.
-        // These streams belong to this transport and can now be released.
-        child.stdin.destroy();
-        child.stdout.destroy();
-        child.stderr.destroy();
-      }
+    const releaseExitedStdio = () => {
+      if (child.exitCode === null && child.signalCode === null) return;
+      // Descendants may retain inherited output pipes. Release only our stream
+      // ends after this child exits; its actual close event still confirms close.
+      child.stdin.destroy();
+      child.stdout.destroy();
+      child.stderr.destroy();
+    };
+    // Subscribe before checking the exit flags, including exit before close()
+    // and exit after the final SIGKILL. Neither case requires a second close().
+    child.on("exit", releaseExitedStdio);
+    try {
+      releaseExitedStdio();
+      let failure: unknown;
+      try { child.stdin.end(); } catch (error) { failure = error; }
       if (await this.waitForClose()) return;
+      for (const signal of ["SIGTERM", "SIGKILL"] as const) {
+        // The actual ChildProcess handle prevents signaling a recycled PID.
+        if (child.exitCode === null && child.signalCode === null) {
+          try {
+            if (!child.kill(signal)) failure = new Error(`Desktop Commander ${signal} was not delivered`);
+          } catch (error) { failure = error; }
+        }
+        if (await this.waitForClose()) return;
+      }
+      throw new Error("Desktop Commander subprocess close was not confirmed", { cause: failure });
+    } finally {
+      child.removeListener("exit", releaseExitedStdio);
     }
-    throw new Error("Desktop Commander subprocess close was not confirmed", { cause: failure });
   }
 
   private async waitForClose(): Promise<boolean> {
