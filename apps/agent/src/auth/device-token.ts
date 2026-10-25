@@ -15,16 +15,21 @@ export class DeviceCredentialRejectedError extends Error {
 export async function refreshRelayToken(
   credential: DeviceCredential,
   client = new ServerClient(new URL(credential.serverUrl)),
+  signal?: AbortSignal,
 ): Promise<DeviceAccessResponse> {
+  signal?.throwIfAborted();
   try {
     const token = await client.refreshDeviceAccess(
       credential.refreshCredential,
+      signal,
     );
+    signal?.throwIfAborted();
     if (token.deviceId !== credential.deviceId) {
       throw new DeviceCredentialRejectedError();
     }
     return token;
   } catch (error) {
+    if (signal?.aborted && error === signal.reason) throw error;
     if (
       error instanceof ServerRequestError &&
       (error.status === 401 || error.status === 403)

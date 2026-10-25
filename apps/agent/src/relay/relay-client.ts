@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import type { IncomingMessage } from "node:http";
 import {
   PROTOCOL_VERSION,
   OPERATION_RECOVERY_CAPABILITY,
@@ -32,6 +33,7 @@ type RelayToken = {
 type SocketFactory = (
   url: URL,
   accessToken: string,
+  signal?: AbortSignal,
 ) => Promise<RelaySocket>;
 
 type WaitForSocketClose = (
@@ -61,10 +63,10 @@ export type RelayClientOptions = {
   credential: DeviceCredential;
   executor: RelayExecutor;
   identity: RelayRuntimeIdentity;
-  refreshToken?: (credential: DeviceCredential) => Promise<RelayToken>;
+  refreshToken?: (credential: DeviceCredential, signal?: AbortSignal) => Promise<RelayToken>;
   socketFactory?: SocketFactory;
   waitForSocketClose?: WaitForSocketClose;
-  sleep?: (ms: number) => Promise<void>;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   heartbeatIntervalMs?: number;
   dispatcher?: ToolDispatcher;
   operations?: OperationCoordinator;
@@ -85,28 +87,53 @@ function relayUrl(serverUrl: string): URL {
 async function defaultSocketFactory(
   url: URL,
   accessToken: string,
+  signal?: AbortSignal,
 ): Promise<RelaySocket> {
+  signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url, {
       headers: { authorization: `Bearer ${accessToken}` },
     });
-    const onError = (error: Error) => {
+    let opened = false;
+    let failed = false;
+    let failure: unknown;
+    const detachHandshake = () => {
+      signal?.removeEventListener("abort", onAbort);
       socket.off("open", onOpen);
-      // ws also emits permanent protocol/TLS validation errors here. Preserve
-      // the original error so only known network codes qualify for retry.
-      reject(error);
+      socket.off("unexpected-response", onResponse);
+    };
+    const fail = (error: unknown) => {
+      if (!failed) { failed = true; failure = error; }
+      detachHandshake();
+      socket.terminate();
+    };
+    const onAbort = () => { if (signal) fail(signal.reason); };
+    const onError = (error: Error) => {
+      // Keep this observer until physical close, including the interval after
+      // open. terminate() during a handshake emits its error on a later tick.
+      if (!opened) fail(error);
+      else socket.terminate();
     };
     const onOpen = () => {
-      socket.off("error", onError);
-      resolve(socket as unknown as RelaySocket);
+      if (signal?.aborted) { onAbort(); return; }
+      opened = true;
+      detachHandshake();
+      resolve(socket);
     };
-    socket.once("unexpected-response", (_request, response) => {
+    const onResponse = (_request: unknown, response: IncomingMessage) => {
       response.resume();
-      reject(new ServerRequestError(response.statusCode ?? 500, null));
-      socket.terminate();
+      fail(new ServerRequestError(response.statusCode ?? 500, null));
+    };
+    socket.once("close", () => {
+      detachHandshake();
+      socket.off("error", onError);
+      if (!opened) reject(failed ? failure : new RelayTransportError());
     });
-    socket.once("error", onError);
+    socket.once("unexpected-response", onResponse);
+    socket.on("error", onError);
     socket.once("open", onOpen);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
 }
 
@@ -114,23 +141,23 @@ async function defaultWaitForClose(
   socket: RelaySocket,
   signal: AbortSignal,
 ): Promise<void> {
-  if (socket.readyState !== 1) return;
-  if (signal.aborted) {
-    socket.close();
-    return;
-  }
+  if (socket.readyState === 3) return;
   await new Promise<void>((resolve) => {
     const done = () => {
       signal.removeEventListener("abort", abort);
       socket.off("close", done);
+      socket.off("error", abort);
       resolve();
     };
     const abort = () => {
-      socket.close(1000, "Agent stopping");
-      done();
+      // OPEN and CLOSING both still own TCP; graceful close can wait 30s for
+      // an unresponsive peer. Stop releases that resource before settling.
+      if (socket.readyState !== 3) socket.terminate();
     };
     signal.addEventListener("abort", abort, { once: true });
     socket.once("close", done);
+    socket.on("error", abort);
+    if (signal.aborted) abort();
   });
 }
 
@@ -202,9 +229,10 @@ export class RelayClient {
   private connectionAttempt = 0;
   private readonly refreshToken: (
     credential: DeviceCredential,
+    signal?: AbortSignal,
   ) => Promise<RelayToken>;
   private readonly socketFactory: SocketFactory;
-  private readonly waitForSocketClose: WaitForSocketClose;
+  private readonly waitForSocketClose: WaitForSocketClose | undefined;
   private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   private readonly heartbeatIntervalMs: number;
   private readonly dispatcher: ToolDispatcher;
@@ -216,10 +244,9 @@ export class RelayClient {
   constructor(private readonly options: RelayClientOptions) {
     this.identity = { ...options.identity };
     this.refreshToken =
-      options.refreshToken ?? ((credential) => refreshRelayToken(credential));
+      options.refreshToken ?? ((credential, signal) => refreshRelayToken(credential, undefined, signal));
     this.socketFactory = options.socketFactory ?? defaultSocketFactory;
-    this.waitForSocketClose =
-      options.waitForSocketClose ?? defaultWaitForClose;
+    this.waitForSocketClose = options.waitForSocketClose;
     this.sleep = options.sleep ?? defaultSleep;
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? 15_000;
     this.dispatcher = options.dispatcher ?? new ToolDispatcher(options.executor);
@@ -275,11 +302,13 @@ export class RelayClient {
   async connectOnce(
     signal: AbortSignal,
   ): Promise<"reconnect" | "incompatible"> {
+    if (signal.aborted) return "reconnect";
     const attempt = ++this.connectionAttempt;
     let token: RelayToken;
     try {
-      token = await this.refreshToken(this.options.credential);
+      token = await this.refreshToken(this.options.credential, signal);
     } catch (error) {
+      if (signal.aborted) throw error;
       // Fetch rejects network failures with TypeError; keep this classification
       // at the token request boundary so executor/programmer failures stay terminal.
       if (error instanceof TypeError || retryableTransport(error)) throw new RelayTransportError();
@@ -292,24 +321,27 @@ export class RelayClient {
 
     let socket: RelaySocket;
     try {
-      socket = await this.socketFactory(relayUrl(this.options.credential.serverUrl), token.accessToken);
+      socket = await this.socketFactory(relayUrl(this.options.credential.serverUrl), token.accessToken, signal);
     } catch (error) {
+      if (signal.aborted) throw error;
       if (retryableTransport(error)) throw new RelayTransportError();
       throw error;
     }
+    // Own cancellation before executor startup or any other await. The waiter
+    // also keeps an error observer until the real close event, even on failure.
+    const socketClosed = defaultWaitForClose(socket, signal);
     if (attempt !== this.connectionAttempt || signal.aborted) {
-      socket.close(1000, "Superseded connection");
+      if (socket.readyState !== 3) socket.terminate();
+      await socketClosed;
       return "reconnect";
     }
     const previous = this.session;
     const session: RelaySession = { socket, recovery: false };
     this.session = session;
-    previous?.socket.close(1000, "Superseded connection");
+    previous?.socket.terminate();
     let incompatible = false;
     const onClose = () => { if (this.session === session) this.session = undefined; };
     socket.once("close", onClose);
-    const onSocketError = () => { socket.terminate(); };
-    socket.on("error", onSocketError);
 
     const onMessage = (data: Buffer | string) => {
       if (this.session !== session || socket.readyState !== 1) return;
@@ -407,15 +439,17 @@ export class RelayClient {
           : null;
       heartbeat?.unref();
 
-      await this.waitForSocketClose(socket, signal);
+      await (this.waitForSocketClose
+        ? Promise.race([this.waitForSocketClose(socket, signal), socketClosed])
+        : socketClosed);
     } finally {
       if (heartbeat) clearInterval(heartbeat);
       unsubscribeState();
       socket.off("message", onMessage);
       socket.off("close", onClose);
-      socket.off("error", onSocketError);
       if (this.session === session) this.session = undefined;
-      if (socket.readyState === 1) socket.close(1000, "Connection ended");
+      if (socket.readyState !== 3) socket.terminate();
+      await socketClosed;
     }
 
     return incompatible ? "incompatible" : "reconnect";
@@ -429,8 +463,9 @@ export class RelayClient {
         const result = await this.connectOnce(signal);
         if (result === "incompatible" || signal.aborted) return;
       } catch (error) {
-        if (signal.aborted) return;
+        if (signal.aborted && error === signal.reason) return;
         if (!(error instanceof RelayTransportError)) throw error;
+        if (signal.aborted) return;
       }
 
       if (this.now() - connectedAt >= this.stableConnectionMs) {

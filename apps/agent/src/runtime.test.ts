@@ -35,6 +35,7 @@ describe("runAgentConnect", () => {
       new URL("https://remote.example.com"),
       store,
       io,
+      { signal },
     );
     expect(createRelay).toHaveBeenCalledWith(credential, executor);
     expect(run).toHaveBeenCalledWith(signal);
