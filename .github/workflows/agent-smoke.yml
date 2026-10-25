@@ -66,6 +66,8 @@ jobs:
         run: node dist/agent-install-check/node_modules/open-desktop-remote-agent/dist/cli.mjs --help
       - name: Check packaged Desktop Commander
         run: node scripts/smoke-packaged-agent.mjs dist/agent-install-check
+      - name: Check installed Agent runtime and graceful shutdown
+        run: node scripts/smoke-packaged-agent-runtime.mjs dist/agent-install-check
       - name: Recheck original upstream after smoke
         run: |
           node scripts/check-upstream-boundary.mjs

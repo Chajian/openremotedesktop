@@ -12,6 +12,8 @@ on:
       - 'scripts/check-agent-publication*'
       - 'scripts/prepare-github-release.mjs'
       - 'scripts/smoke-packaged-agent.mjs'
+      - 'scripts/smoke-packaged-agent-runtime.mjs'
+      - 'scripts/fixtures/packaged-agent-preload.mjs'
       - 'scripts/check-upstream-boundary*'
       - 'scripts/upstream-desktop-commander-0.3.1.json'
       - 'pnpm-lock.yaml'
@@ -94,6 +96,10 @@ jobs:
           node scripts/smoke-packaged-agent.mjs dist/agent-install-check
           node scripts/check-upstream-boundary.mjs
           node scripts/check-upstream-boundary.mjs --installed-package dist/agent-install-check/node_modules/@wonderwhy-er/desktop-commander
+      - name: Check installed Agent runtime and graceful shutdown
+        # Download-only rebuilds of historical tags predate this harness.
+        if: github.event_name != 'workflow_dispatch' || inputs.release_tag == ''
+        run: node scripts/smoke-packaged-agent-runtime.mjs dist/agent-install-check
       - name: Validate GitHub Release assets and SHA256 checksums
         if: matrix.os == 'ubuntu-latest'
         run: |
