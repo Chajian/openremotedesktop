@@ -20,6 +20,9 @@ if (mode === "descendant") {
 } else {
   const descendant = spawn(process.execPath, [fileURLToPath(import.meta.url), "descendant", directory], {
     stdio: ["ignore", process.stdout, process.stderr, "ipc"],
+    // Keep the fixture-owned descendant alive after its parent exits on Windows;
+    // its private stop file, not the parent's job, controls teardown.
+    detached: process.platform === "win32",
     windowsHide: true,
   });
   descendant.on("error", error => { throw error; });
