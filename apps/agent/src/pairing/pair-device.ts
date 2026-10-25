@@ -16,7 +16,8 @@ export type PairingUi = {
 
 export type PairDeviceOptions = {
   client?: ServerClient;
-  sleep?: (ms: number) => Promise<void>;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  signal?: AbortSignal;
 };
 
 export class PairingFailedError extends Error {
@@ -26,17 +27,48 @@ export class PairingFailedError extends Error {
   }
 }
 
-const defaultSleep = (ms: number) =>
-  new Promise<void>((resolve) => setTimeout(resolve, ms));
+const defaultSleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done, { once: true });
+    if (signal?.aborted) done();
+  });
+
+async function waitForPoll(
+  sleep: NonNullable<PairDeviceOptions["sleep"]>,
+  ms: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!signal) return sleep(ms);
+  signal.throwIfAborted();
+  const stopped = Promise.withResolvers<never>();
+  const abort = () => stopped.reject(signal.reason);
+  signal.addEventListener("abort", abort, { once: true });
+  try {
+    // The owned timer observes signal; legacy injected sleeps may ignore it.
+    await Promise.race([sleep(ms, signal), stopped.promise]);
+    signal.throwIfAborted();
+  } finally {
+    signal.removeEventListener("abort", abort);
+  }
+}
 
 export async function pairDevice(
   serverUrl: URL,
   io: PairingUi,
   options: PairDeviceOptions = {},
 ): Promise<DeviceCredential> {
+  const { signal } = options;
+  signal?.throwIfAborted();
   const client = options.client ?? new ServerClient(serverUrl);
   const sleep = options.sleep ?? defaultSleep;
-  const created = await client.createPairing();
+  const created = await client.createPairing(signal);
+  signal?.throwIfAborted();
 
   io.showVerification({
     verificationUri: created.verificationUri,
@@ -45,7 +77,9 @@ export async function pairDevice(
 
   let interval = created.interval;
   for (;;) {
-    const result = await client.pollPairing(created.deviceCode);
+    signal?.throwIfAborted();
+    const result = await client.pollPairing(created.deviceCode, signal);
+    signal?.throwIfAborted();
     if (result.status === "approved") {
       return {
         serverUrl: serverUrl.toString(),
@@ -57,7 +91,7 @@ export async function pairDevice(
       throw new PairingFailedError(result.status);
     }
     interval = result.interval;
-    await sleep(interval * 1000);
+    await waitForPoll(sleep, interval * 1000, signal);
   }
 }
 
@@ -67,7 +101,9 @@ export async function ensureDeviceCredential(
   io: PairingUi,
   options: PairDeviceOptions = {},
 ): Promise<DeviceCredential> {
+  options.signal?.throwIfAborted();
   const existing = await store.get();
+  options.signal?.throwIfAborted();
   if (
     existing &&
     new URL(existing.serverUrl).toString() === serverUrl.toString()
@@ -76,6 +112,7 @@ export async function ensureDeviceCredential(
   }
 
   const credential = await pairDevice(serverUrl, io, options);
+  options.signal?.throwIfAborted();
   await store.set(credential);
   return credential;
 }

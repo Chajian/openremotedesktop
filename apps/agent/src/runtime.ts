@@ -60,7 +60,13 @@ export async function runAgentConnect(
   const io = options.io ?? defaultPairingUi(serverUrl);
   const ensureCredential =
     options.ensureCredential ?? ensureDeviceCredential;
-  const credential = await ensureCredential(serverUrl, store, io);
+  let credential: DeviceCredential;
+  try {
+    credential = await ensureCredential(serverUrl, store, io, { signal });
+  } catch (error) {
+    if (signal.aborted && error === signal.reason) return;
+    throw error;
+  }
   if (signal.aborted) return;
   const executor =
     options.createExecutor?.() ??
