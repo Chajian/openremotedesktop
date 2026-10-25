@@ -100,6 +100,9 @@ describe("Desktop Commander 0.3.1 real stdio upgrade regressions", () => {
     }
   }, 45_000);
 
+  // Upstream preloads document libraries after MCP initialization. Cold starts
+  // can delay the first file calls, so bound these real multi-call cases like
+  // the other I/O regressions instead of Vitest's default five seconds.
   it("round-trips writes and appends in a Chinese path containing spaces", async () => {
     const path = join(workspace, "测试 file.txt");
     expect((await call("write_file", { path, content: "第一行\nsecond line" })).isError)
@@ -110,7 +113,7 @@ describe("Desktop Commander 0.3.1 real stdio upgrade regressions", () => {
     expect(result.isError).not.toBe(true);
     expect(text(result)).toContain("第一行\nsecond line\n追加内容");
     expect(await readFile(path, "utf8")).toBe("第一行\nsecond line\n追加内容");
-  });
+  }, 30_000);
 
   it("reads an empty file and returns a useful directory listing", async () => {
     const directory = join(workspace, "空目录");
@@ -123,7 +126,7 @@ describe("Desktop Commander 0.3.1 real stdio upgrade regressions", () => {
     expect(listing.isError).not.toBe(true);
     expect(text(listing)).toContain("list_directory");
     expect(text(listing)).toContain("[FILE] empty.txt");
-  });
+  }, 30_000);
 
   it("reads exact deep and tail lines from a UTF-8 file over 10 MiB", async () => {
     const path = join(workspace, "大文件.txt");
