@@ -14,6 +14,15 @@ const packageRoot = join(install, "node_modules", "open-desktop-remote-agent");
 const require = createRequire(join(packageRoot, "package.json"));
 const pkg = require("./package.json");
 const release = JSON.parse(await readFile(new URL("../apps/agent/src/version.json", import.meta.url), "utf8"));
+const manifest = JSON.parse(await readFile(new URL("../packages/tool-contracts/src/manifest.generated.json", import.meta.url), "utf8"));
+const contracts = manifest.map(tool => ({
+  name: tool.name, inputSchema: tool.inputSchema ?? null, outputSchema: tool.outputSchema ?? null,
+})).sort((left, right) => left.name.localeCompare(right.name));
+const catalogJson = JSON.stringify(contracts, (_key, value) =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, value[key]]))
+    : value);
+const expectedToolsHash = createHash("sha256").update(catalogJson).digest("hex");
 assert.equal(pkg.name, "open-desktop-remote-agent");
 assert.equal(pkg.version, release.version);
 const { WebSocketServer } = require("ws");
@@ -201,7 +210,7 @@ try {
   assert.ok(greeting.capabilities.includes("desktop-commander"));
   const readiness = await step(ready.promise, "READY");
   assert.equal(readiness.desktopCommanderVersion, greeting.desktopCommanderVersion);
-  assert.match(readiness.toolsHash, /^[a-f0-9]{64}$/);
+  assert.equal(readiness.toolsHash, expectedToolsHash, "Installed Agent catalog differs from the source contract");
   const executorPid = await step(executorSpawned.promise, "executor spawn");
   await step(identities.get(executorPid), "executor identity");
   assert.equal(spawned.size, 1);
