@@ -27,6 +27,8 @@ type ExecutorOwnership = {
 
 type Initialization = {
   controller: AbortController;
+  stopped: PromiseWithResolvers<void>;
+  outcome: { kind: "cancelled" } | { kind: "failed"; source: "close" | "startup"; error: unknown } | undefined;
   ownership: ExecutorOwnership | undefined;
   factorySettled: boolean;
   finished: boolean;
@@ -146,7 +148,8 @@ export class ExecutorManager {
 
   private async initialize(epoch: number): Promise<void> {
     const initialization: Initialization = {
-      controller: new AbortController(), ownership: undefined, factorySettled: true, finished: false,
+      controller: new AbortController(), stopped: Promise.withResolvers<void>(), outcome: undefined,
+      ownership: undefined, factorySettled: true, finished: false,
     };
     this.initializing = initialization;
     const { signal } = initialization.controller;
@@ -175,10 +178,11 @@ export class ExecutorManager {
     };
     try {
       this.setState("EXECUTOR_STARTING");
-      if (epoch !== this.epoch) return;
+      if (epoch !== this.epoch) {
+        if (initialization.outcome?.kind === "failed") throw initialization.outcome.error;
+        return;
+      }
       let published = false;
-      let failed = false;
-      let failure: unknown;
       try {
         initialization.factorySettled = false;
         let factory: Promise<ExecutorClient>;
@@ -195,11 +199,12 @@ export class ExecutorManager {
         }, error => {
           initialization.factorySettled = true;
           if (this.pendingFactory?.initialization === initialization) this.pendingFactory = undefined;
+          this.recordInitializationFailure(initialization, error);
           throw error;
         });
-        const client = await this.waitForInitialization(observedFactory, signal);
+        const client = await this.waitForInitialization(observedFactory, initialization);
         if (epoch === this.epoch) {
-          const tools = await this.waitForInitialization(client.listTools({ signal }), signal);
+          const tools = await this.waitForInitialization(client.listTools({ signal }), initialization);
           if (epoch === this.epoch) {
             if (tools.length === 0) throw new Error("Desktop Commander exposed no tools");
             this.validateTools(tools);
@@ -211,9 +216,8 @@ export class ExecutorManager {
           }
         }
       } catch (error) {
-        if (!signal.aborted) {
-          failed = true;
-          failure = error;
+        this.recordInitializationFailure(initialization, error);
+        if (initialization.outcome?.kind === "failed") {
           if (epoch === this.epoch) {
             this.client = null;
             this.setState("EXECUTOR_FAILED");
@@ -229,29 +233,41 @@ export class ExecutorManager {
         try {
           if (initialization.ownership) await this.closeClient(initialization.ownership);
         } catch (shutdownError) {
-          if (failed) throw new AggregateError([failure, shutdownError], "Executor initialization failed and shutdown could not be confirmed");
+          if (initialization.outcome?.kind === "failed") {
+            throw new AggregateError([initialization.outcome.error, shutdownError], "Executor initialization failed and shutdown could not be confirmed");
+          }
           throw shutdownError;
         }
       }
-      if (failed) throw failure;
+      // Required cleanup can settle the source factory after its close callback.
+      // Prefer that observed source error to the generic close failure, without
+      // waiting for an opaque factory that ignores shutdown. Once finished, a
+      // late rejection cannot change this result or a replacement's state.
+      if (initialization.outcome?.kind === "failed") throw initialization.outcome.error;
     } finally {
       initialization.finished = true;
       if (this.initializing === initialization) this.initializing = undefined;
     }
   }
 
-  private async waitForInitialization<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
-    const stopped = Promise.withResolvers<never>();
-    const abort = () => { stopped.reject(signal.reason); };
-    signal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted) abort();
-    try {
-      // Passing a signal alone cannot release the queue if an injected factory
-      // or client ignores cancellation. Both late success and rejection remain observed.
-      return await Promise.race([pending, stopped.promise]);
-    } finally {
-      signal.removeEventListener("abort", abort);
-    }
+  private recordInitializationFailure(initialization: Initialization, error: unknown): void {
+    const outcome = initialization.outcome;
+    if (initialization.finished || outcome?.kind === "cancelled") return;
+    if (outcome?.kind === "failed" && (outcome.source === "startup" || error === outcome.error)) return;
+    initialization.outcome = { kind: "failed", source: "startup", error };
+  }
+
+  private async waitForInitialization<T>(pending: Promise<T>, initialization: Initialization): Promise<T> {
+    // Observe the source independently: a cleanup callback can release the race
+    // before the factory reports the error which caused that cleanup.
+    const observed = pending.catch(error => {
+      this.recordInitializationFailure(initialization, error);
+      throw error;
+    });
+    return await Promise.race([observed, initialization.stopped.promise.then(() => {
+      const outcome = initialization.outcome;
+      throw outcome?.kind === "failed" ? outcome.error : initialization.controller.signal.reason;
+    })]);
   }
 
   async restart(): Promise<void> {
@@ -273,7 +289,7 @@ export class ExecutorManager {
   }
 
   markCrashed(): void {
-    this.invalidateClient(this.currentState === "INCOMPATIBLE" ? "INCOMPATIBLE" : "EXECUTOR_FAILED");
+    this.invalidateClient(this.currentState === "INCOMPATIBLE" ? "INCOMPATIBLE" : "EXECUTOR_FAILED", true);
   }
 
   markIncompatible(): void {
@@ -305,10 +321,20 @@ export class ExecutorManager {
     }
   }
 
-  private invalidateClient(state: DeviceState): void {
+  private invalidateClient(state: DeviceState, unexpectedClose = false): void {
     const epoch = ++this.epoch;
     this.client = null;
-    this.initializing?.controller.abort();
+    const initialization = this.initializing;
+    if (initialization) {
+      initialization.outcome ??= unexpectedClose
+        ? { kind: "failed", source: "close", error: new Error("Desktop Commander closed during initialization") }
+        : { kind: "cancelled" };
+      initialization.stopped.resolve();
+      // A physical-close observer runs before the SDK rejects pending requests.
+      // Aborting then would replace the real MCP error with an abort error.
+      // Only a deliberate cancellation that won the outcome may abort the source.
+      if (initialization.outcome.kind === "cancelled") initialization.controller.abort();
+    }
     // Abort callbacks run synchronously and can issue a newer invalidation.
     // Never replace that request's state with the state of this older request.
     if (epoch !== this.epoch) return;
