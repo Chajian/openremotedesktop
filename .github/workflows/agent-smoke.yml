@@ -33,8 +33,11 @@ jobs:
         run: pnpm --filter @open-desktop-remote/agent... install --frozen-lockfile
       - name: Verify original upstream before smoke
         run: pnpm upstream:check
-      - name: Agent tests
-        run: pnpm --filter @open-desktop-remote/agent test:run
+      - name: Agent, executor and tool-contract regression tests
+        run: |
+          pnpm --filter @open-desktop-remote/tool-contracts test:run
+          pnpm --filter @open-desktop-remote/desktop-commander-adapter test:run
+          pnpm --filter @open-desktop-remote/agent test:run
       - name: Validate macOS installer syntax
         if: runner.os != 'Windows'
         run: bash -n scripts/install-macos.sh

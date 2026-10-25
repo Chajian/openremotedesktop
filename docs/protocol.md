@@ -38,7 +38,19 @@ Reports local executor transitions such as:
 
 States that the local Desktop Commander MCP process is initialized, tool discovery/compatibility passed, and the device may receive tool calls.
 
+The existing optional `toolsHash` field carries a SHA-256 fingerprint of sorted
+tool names and canonical input/output schemas. Current Agents validate that
+catalog against their packaged manifest before sending READY. The hash excludes
+platform descriptions and advisory metadata. It is diagnostic, not a new
+mandatory handshake gate: a legacy Agent without it continues to work. The
+protocol version and message schemas remain unchanged.
+
 A reconnect may reassert READY directly after authentication when the local executor survived the network loss.
+
+Unexpected local subprocess close is reported as `EXECUTOR_FAILED` on the active
+Relay session. Protocol incompatibility immediately stops tool admission, but
+the Agent retains ownership of its client until physical shutdown is confirmed.
+Neither invalidation nor a failed shutdown permits unknown operations to replay.
 
 ### `heartbeat`
 

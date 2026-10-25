@@ -87,6 +87,27 @@ The Adapter resolves the installed package entry point and starts the ordinary l
 
 Compatibility is gated by a generated 25-tool manifest and live stdio integration tests.
 
+The runtime checks the subprocess-reported version and exact tool names plus
+input/output schemas before READY. A nonempty but incomplete catalog is rejected
+and its subprocess is closed. Reinstall the matching Agent package if its pinned
+dependency or generated contract has drifted. An initialization error or a
+protocol-incompatibility notice retains the cleanup handle; failed shutdown
+blocks a replacement process until cleanup succeeds.
+
+Server updates continue to accept installed 0.2.52 Agents for the common 25-tool
+catalog. `get_prompts` was removed in 0.3.1, so clients with a cached catalog must
+refresh `tools/list`. Search context/limit/timeout arguments require nonnegative
+integers, pagination length requires a positive integer, and negative integer
+pagination offsets remain supported. Public shell guidance is device-neutral;
+query the selected device's `get_config` for its actual default shell.
+
+Both existing three-OS CI matrices run the real adapter lifecycle and file/PDF/
+search/process regression suite. Native execution evidence is still required
+for platform acceptance; platform-description fixtures alone are not a native
+Windows or macOS result. Upstream malformed-PDF responses currently include an
+error diagnostic in text without `isError: true`; the proxy preserves that
+upstream result and tests subsequent process availability.
+
 The generated catalog lives in the pure `tool-contracts` workspace package. The
 Agent still launches the original pinned upstream package through the same local
 stdio adapter; operation recovery is implemented entirely in OpenRemote code.

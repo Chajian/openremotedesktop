@@ -70,6 +70,18 @@ The Agent:
 
 The Agent does not know whether the upstream client is ChatGPT, Claude, Cursor or another MCP client.
 
+`runtime.ts` assembles the release/platform/executor identity and injects it into
+`RelayClient`. Relay does not import the concrete adapter or its version constant.
+`ExecutorManager` separately tracks call readiness and physical client ownership:
+startup/restart/close are serialized, and invalidation revokes calls immediately
+without discarding the cleanup handle. A failed close retains that handle and
+blocks replacement until an explicit cleanup retry confirms shutdown.
+
+The adapter owns its native `ChildProcess` through a small stdio transport using
+the MCP SDK's public framing APIs. It drains stderr without logging tool data,
+waits for physical close, and retains the same process handle after failed
+termination. It neither signals a saved PID nor accesses private SDK fields.
+
 ## State ownership
 
 MCP HTTP is stateless at the application boundary. A ChatGPT MCP request is not a device session.
@@ -127,6 +139,30 @@ The pure `packages/tool-contracts/` package ships a generated manifest from the 
 ```
 
 The Server strips `deviceId` before forwarding the remaining arguments to Desktop Commander.
+
+The catalog preserves standard tool annotations, titles, icons, output schemas
+and portable `_meta`. Unknown top-level metadata makes generation fail until
+proxy support is reviewed. Local Desktop Commander UI resource bindings
+(`ui/resourceUri`, `ui.resourceUri`, `openai/outputTemplate` and
+`openai/widgetAccessible`) are explicitly omitted from the public catalog:
+Relay v1 does not proxy `resources/read`. The local adapter retains the original
+metadata. This prevents advertising resource previews that the Server cannot serve.
+
+Public `start_process` guidance describes the selected device rather than the
+machine that generated the catalog. Use `list_devices`/`get_device_status` for
+its platform and `get_config` for its shell and environment. The local adapter
+retains upstream runtime descriptions; generation normalizes only the known OS
+section and host mount supplements, preserving executable schemas and examples.
+
+New Agents verify the upstream server version and exact tool-name/input/output
+schema set before READY. Their optional `toolsHash` is SHA-256 over the canonical
+execution catalog; descriptions and hints do not affect it. Older Agents without
+the hash remain accepted. The current 25 tools are supported by both 0.2.52 and
+0.3.1: `get_prompts` is no longer public, and five search arguments now require
+integers. A cached `get_prompts` call receives a tool-not-found error before any
+dispatch; clients should refresh `tools/list`. Fractional/invalid search inputs
+are rejected before routing, while valid current inputs remain accepted by the
+older number schemas.
 
 Control tools are implemented by Open Desktop Remote itself:
 
