@@ -411,4 +411,52 @@ describe("ExecutorManager initialization cancellation", () => {
       await manager.close();
     }
   });
+
+  it("preserves a newer incompatible state raised synchronously by an abort listener", async () => {
+    const client = clientFixture();
+    const factory = Promise.withResolvers<ExecutorClient>();
+    const entered = Promise.withResolvers<void>();
+    const states: string[] = [];
+    let starts = 0;
+    const manager = new ExecutorManager({
+      onState: state => states.push(state),
+      startClient: (onCreated, signal) => {
+        starts++;
+        onCreated(client);
+        signal.addEventListener("abort", () => manager.markIncompatible(), { once: true });
+        entered.resolve();
+        return factory.promise;
+      },
+    });
+    const starting = manager.start();
+    await entered.promise;
+    try {
+      await manager.restart();
+      await starting;
+      expect(manager.state()).toBe("INCOMPATIBLE");
+      expect(states).toEqual(["EXECUTOR_STARTING", "INCOMPATIBLE"]);
+      expect(client.closes).toBe(1);
+      await expect(manager.start()).rejects.toThrow(/incompatible/i);
+      expect(starts).toBe(1);
+    } finally {
+      factory.resolve(client);
+      await starting;
+      await manager.close();
+    }
+  });
+
+  it("does not send a stale starting state after an observer synchronously invalidates it", async () => {
+    const states: string[] = [];
+    let starts = 0;
+    const manager = new ExecutorManager({
+      onState: state => { if (state === "EXECUTOR_STARTING") manager.markIncompatible(); },
+      startClient: async () => { starts++; return clientFixture(); },
+    });
+    manager.onStateChanged(state => states.push(state));
+    await manager.start();
+    expect(manager.state()).toBe("INCOMPATIBLE");
+    expect(states).toEqual(["INCOMPATIBLE"]);
+    expect(starts).toBe(0);
+    await manager.close();
+  });
 });
