@@ -2,6 +2,7 @@ import type { DeviceCredential } from "../credentials/credential-store.js";
 import {
   ServerClient,
   ServerRequestError,
+  ServerResponseError,
   type DeviceAccessResponse,
 } from "../http/server-client.js";
 
@@ -25,7 +26,7 @@ export async function refreshRelayToken(
     );
     signal?.throwIfAborted();
     if (token.deviceId !== credential.deviceId) {
-      throw new DeviceCredentialRejectedError();
+      throw new ServerResponseError();
     }
     return token;
   } catch (error) {

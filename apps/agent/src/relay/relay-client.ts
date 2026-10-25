@@ -15,7 +15,7 @@ import { ToolDispatcher } from "../requests/tool-dispatcher.js";
 import { OperationCoordinator, OperationStore } from "../requests/operation-store.js";
 import { OperationQuery } from "../requests/operation-query.js";
 import { DeviceCredentialRejectedError, refreshRelayToken } from "../auth/device-token.js";
-import { ServerRequestError } from "../http/server-client.js";
+import { ServerRequestError, ServerResponseError, ServerTransportError } from "../http/server-client.js";
 
 export type RelaySocket = EventEmitter & {
   readyState: number;
@@ -170,7 +170,7 @@ function retryableTransport(error: unknown): boolean {
   if (error instanceof ServerRequestError) {
     return error.status === 408 || error.status === 429 || (error.status >= 500 && error.status < 600);
   }
-  if (error instanceof RelayTransportError) return true;
+  if (error instanceof RelayTransportError || error instanceof ServerTransportError) return true;
   return error instanceof Error && "code" in error && [
     "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "ENOTFOUND", "EAI_AGAIN",
   ].includes(String(error.code));
@@ -309,14 +309,13 @@ export class RelayClient {
       token = await this.refreshToken(this.options.credential, signal);
     } catch (error) {
       if (signal.aborted) throw error;
-      // Fetch rejects network failures with TypeError; keep this classification
-      // at the token request boundary so executor/programmer failures stay terminal.
-      if (error instanceof TypeError || retryableTransport(error)) throw new RelayTransportError();
+      // HTTP I/O marks transport failures; parsing and programmer errors are terminal.
+      if (retryableTransport(error)) throw new RelayTransportError();
       throw error;
     }
     if (attempt !== this.connectionAttempt || signal.aborted) return "reconnect";
     if (token.deviceId !== this.options.credential.deviceId) {
-      throw new DeviceCredentialRejectedError();
+      throw new ServerResponseError();
     }
 
     let socket: RelaySocket;
