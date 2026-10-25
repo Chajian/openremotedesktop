@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SdkErrorCode } from "@modelcontextprotocol/client";
 import { DesktopCommanderClient } from "@open-desktop-remote/desktop-commander-adapter";
+import type { DeviceState } from "@open-desktop-remote/shared";
 import { ExecutorManager } from "./executor-manager.js";
 import { runAgentConnect } from "../runtime.js";
 import { RelayClient, type RelaySocket } from "../relay/relay-client.js";
@@ -68,10 +69,10 @@ async function within<T>(promise: Promise<T>, ms = 2_000): Promise<T> {
   } finally { clearTimeout(timer); }
 }
 
-function managerFixture() {
+function managerFixture(onState?: (state: DeviceState) => void) {
   const states: string[] = [];
   const manager = new ExecutorManager({
-    onState: state => states.push(state),
+    onState: state => { states.push(state); onState?.(state); },
     startClient: (onCreated, signal) => DesktopCommanderClient.start({ onCreated, signal }),
   });
   return { manager, states };
@@ -116,10 +117,13 @@ describe("real MCP initialization failure attribution", () => {
     }
   }, 10_000);
 
-  it.each(failureCases)("terminates runtime after $mode without heartbeat or reconnect", async ({ mode, code }) => {
+  it.each(failureCases.flatMap(failure => [false, true].map(stopOnFailure => ({ ...failure, stopOnFailure }))))(
+    "terminates runtime after $mode (stop during failure: $stopOnFailure) without heartbeat or reconnect", async ({ mode, code, stopOnFailure }) => {
     fixture.mode = mode;
-    const { manager } = managerFixture();
     const controller = new AbortController();
+    const { manager } = managerFixture(state => {
+      if (stopOnFailure && state === "EXECUTOR_FAILED") controller.abort();
+    });
     const socket = new ControlledSocket();
     const credential = { serverUrl: "https://remote.example.com/", deviceId: "11111111-1111-4111-8111-111111111111", refreshCredential: "fixture-refresh" };
     const intervals = vi.spyOn(globalThis, "setInterval");
@@ -146,7 +150,7 @@ describe("real MCP initialization failure attribution", () => {
       const { error } = await within(outcome);
       expect(error).toMatchObject({ code });
       if (mode === "refuse") expect(error).toMatchObject({ message: expect.stringContaining("Fixture initialization refused") });
-      expect(controller.signal.aborted).toBe(false);
+      expect(controller.signal.aborted).toBe(stopOnFailure);
       expect(session.isClosed).toBe(true);
       expect(session.child.stdout?.destroyed).toBe(true);
       expect(session.child.stderr?.destroyed).toBe(true);
