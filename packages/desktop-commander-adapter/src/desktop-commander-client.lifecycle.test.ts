@@ -94,6 +94,30 @@ async function within<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 }
 
 describe("Desktop Commander subprocess lifecycle", () => {
+  it("does not create a child for an already aborted startup signal", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let created: DesktopCommanderClient | undefined;
+    try {
+      await expect(DesktopCommanderClient.start({ signal: controller.signal, onCreated(client) { created = client; } }))
+        .rejects.toMatchObject({ name: "AbortError" });
+      expect(fixture.sessions).toHaveLength(0);
+      expect(created).toBeUndefined();
+    } finally { await created?.close(); }
+  });
+
+  it("honors cancellation from onCreated before spawning", async () => {
+    const controller = new AbortController();
+    let created: DesktopCommanderClient | undefined;
+    try {
+      await expect(DesktopCommanderClient.start({
+        signal: controller.signal,
+        onCreated(client) { created = client; controller.abort(); },
+      })).rejects.toMatchObject({ name: "AbortError" });
+      expect(fixture.sessions).toHaveLength(0);
+    } finally { await created?.close(); }
+  });
+
   it.each(["noise-before-initialize", "invalid-frame-before-initialize"])("preserves SDK recovery after %s before valid MCP data", async mode => {
     fixture.mode = mode;
     const client = await DesktopCommanderClient.start();

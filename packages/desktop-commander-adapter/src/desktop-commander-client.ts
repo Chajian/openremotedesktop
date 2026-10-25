@@ -15,6 +15,7 @@ export type ToolDefinition = Tool;
 export type DesktopCommanderStartOptions = {
   desktopCommanderVersion?: typeof DESKTOP_COMMANDER_VERSION;
   cwd?: string;
+  signal?: AbortSignal;
   clientInfo?: { name: string; version: string };
   // Transfer lifecycle ownership before connect can spawn a subprocess.
   onCreated?: (client: DesktopCommanderClient) => void;
@@ -64,6 +65,7 @@ export class DesktopCommanderClient {
   static async start(
     options: DesktopCommanderStartOptions = {},
   ): Promise<DesktopCommanderClient> {
+    options.signal?.throwIfAborted();
     const version =
       options.desktopCommanderVersion ?? DESKTOP_COMMANDER_VERSION;
     if (version !== DESKTOP_COMMANDER_VERSION) {
@@ -84,11 +86,13 @@ export class DesktopCommanderClient {
 
     try {
       options.onCreated?.(adapter);
+      options.signal?.throwIfAborted();
       if (adapter.closePromise !== undefined) {
         throw new Error("Desktop Commander client was closed before startup");
       }
       adapter.connectStarted = true;
-      await client.connect(transport);
+      await client.connect(transport, options.signal === undefined ? undefined : { signal: options.signal });
+      options.signal?.throwIfAborted();
       if (client.getServerVersion()?.version !== version) {
         throw new Error("Desktop Commander server version does not match the pinned version");
       }
@@ -106,8 +110,8 @@ export class DesktopCommanderClient {
     }
   }
 
-  async listTools(): Promise<ToolDefinition[]> {
-    const result = await this.client.listTools();
+  async listTools(options?: { signal?: AbortSignal }): Promise<ToolDefinition[]> {
+    const result = await this.client.listTools(undefined, options);
     return result.tools;
   }
 

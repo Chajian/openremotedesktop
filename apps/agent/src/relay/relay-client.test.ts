@@ -48,6 +48,24 @@ function fakeExecutor(state: "AUTHENTICATED" | "READY" = "AUTHENTICATED") {
 }
 
 describe("RelayClient", () => {
+  it("removes its close waiter when stop finishes before the socket close event", async () => {
+    const socket = new FakeSocket();
+    socket.close = () => { socket.readyState = 2; };
+    const controller = new AbortController();
+    const relay = new RelayClient({
+      credential, identity, executor: fakeExecutor("READY"),
+      refreshToken: async () => ({ accessToken: "fixture-access", expiresAt: Date.now() + 60_000, deviceId: credential.deviceId }),
+      socketFactory: async () => socket, heartbeatIntervalMs: 0,
+    });
+    const connecting = relay.connectOnce(controller.signal);
+    await vi.waitFor(() => expect(socket.sent.some(raw => JSON.parse(raw).type === "agent.ready")).toBe(true));
+    controller.abort();
+    await connecting;
+    expect(socket.listenerCount("close")).toBe(0);
+    socket.readyState = 3;
+    socket.emit("close");
+  });
+
   it("uses the injected runtime identity in hello and READY without binding to an executor package", async () => {
     const socket = new FakeSocket();
     const relay = new RelayClient({

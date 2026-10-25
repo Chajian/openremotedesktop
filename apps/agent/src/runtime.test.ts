@@ -83,6 +83,36 @@ describe("runtime lifecycle failure paths", () => {
     ensureCredential: async () => ({ serverUrl: "https://remote.example.com/", deviceId: "11111111-1111-4111-8111-111111111111", refreshCredential: "fixture-refresh" }),
   };
 
+  it("does not access credentials or construct an executor when already stopped", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const ensureCredential = vi.fn(options.ensureCredential);
+    const createExecutor = vi.fn(() => new ExecutorManager({ startClient: async () => { throw new Error("must not start"); } }));
+    await runAgentConnect(new URL("https://remote.example.com"), controller.signal, { ...options, ensureCredential, createExecutor });
+    expect(ensureCredential).not.toHaveBeenCalled();
+    expect(createExecutor).not.toHaveBeenCalled();
+  });
+
+  it("observes the same failed shutdown from abort and final cleanup without retrying", async () => {
+    const controller = new AbortController();
+    const entered = Promise.withResolvers<void>();
+    const failedClose = new Error("fixture shutdown failure");
+    const executor = new ExecutorManager({ startClient: async () => { throw new Error("must not start"); } });
+    const close = vi.spyOn(executor, "close").mockRejectedValue(failedClose);
+    const running = runAgentConnect(new URL("https://remote.example.com"), controller.signal, {
+      ...options, createExecutor: () => executor,
+      createRelay: () => ({ run: async signal => {
+        entered.resolve();
+        await new Promise<void>(resolve => signal.addEventListener("abort", () => setImmediate(resolve), { once: true }));
+      } }),
+    });
+    const result = running.catch((error: unknown) => error);
+    await entered.promise;
+    controller.abort();
+    expect(await result).toBe(failedClose);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it("closes an owned executor even when relay construction throws", async () => {
     let closes = 0;
     const executor = new ExecutorManager({ startClient: async () => ({
