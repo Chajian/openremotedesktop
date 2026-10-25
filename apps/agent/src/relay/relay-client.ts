@@ -8,8 +8,8 @@ import {
   type RelayMessage,
 } from "@open-desktop-remote/protocol";
 import WebSocket from "ws";
+import type { DeviceState } from "@open-desktop-remote/shared";
 import type { DeviceCredential } from "../credentials/credential-store.js";
-import type { ExecutorManager } from "../executor/executor-manager.js";
 import { ToolDispatcher } from "../requests/tool-dispatcher.js";
 import { OperationCoordinator, OperationStore } from "../requests/operation-store.js";
 import { OperationQuery } from "../requests/operation-query.js";
@@ -46,9 +46,20 @@ export type RelayRuntimeIdentity = Readonly<{
   toolsHash?: string;
 }>;
 
+/** Executor capabilities consumed by Relay; physical shutdown stays with runtime. */
+export interface RelayExecutor {
+  state(): DeviceState;
+  start(): Promise<void>;
+  restart(): Promise<void>;
+  markIncompatible(): void;
+  callTool(name: string, args: unknown, options?: { timeoutMs: number }): Promise<unknown>;
+  onInvalidated(listener: () => void): () => void;
+  onStateChanged(listener: (state: DeviceState) => void): () => void;
+}
+
 export type RelayClientOptions = {
   credential: DeviceCredential;
-  executor: ExecutorManager;
+  executor: RelayExecutor;
   identity: RelayRuntimeIdentity;
   refreshToken?: (credential: DeviceCredential) => Promise<RelayToken>;
   socketFactory?: SocketFactory;
@@ -223,7 +234,7 @@ export class RelayClient {
       throw new Error("Operation store identity does not match this Agent");
     }
     this.operationQuery = new OperationQuery(this.operations.store);
-    options.executor.onInvalidated?.(() => this.operations.invalidateRunning());
+    options.executor.onInvalidated(() => this.operations.invalidateRunning());
   }
 
   private async recoverStalledExecutor(): Promise<void> {
