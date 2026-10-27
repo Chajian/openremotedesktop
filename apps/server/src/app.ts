@@ -19,6 +19,8 @@ import { registerRelayRoute } from "./relay/relay-route.js";
 import { DeviceAuthService } from "./devices/device-auth.js";
 import { DeviceRepository } from "./devices/device-repository.js";
 import { DeviceManagementService } from "./devices/device-management-service.js";
+import { SupportService } from "./support/support-service.js";
+import { registerSupportRoutes } from "./support/routes.js";
 import { PairingService } from "./devices/pairing-service.js";
 import { registerBootstrapRoutes } from "./routes/bootstrap.js";
 import { registerDevicePairingRoutes } from "./routes/device-pairing.js";
@@ -75,6 +77,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
   const registry = new ConnectionRegistry();
   const broker = new RequestBroker(registry);
   const deviceManagement = new DeviceManagementService(devices, registry, broker);
+  const support = new SupportService(deps.db, devices, deviceManagement);
   const logger = createServerLogger();
   const operationRepository = new OperationRepository(deps.db);
   const operations = new OperationService(operationRepository, broker, new OwnedOperationAccessPolicy(devices), {logger});
@@ -104,6 +107,8 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
   registerOAuthFlowRoutes(app, oauth, sessions, deps.config);
   registerDevicePairingRoutes(app, pairings, sessions, deps.config);
   registerDeviceRoutes(app, devices, deviceAuth, sessions, deviceManagement);
+  // Keep authenticated session termination available when pilot issuance is disabled.
+  registerSupportRoutes(app, support, deps.config);
   void app.register(async (relayApp) => {
     await relayApp.register(websocket);
     registerRelayRoute(relayApp, deviceAuth, devices, registry, broker, logger);
@@ -128,6 +133,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
     pairings,
     devices,
     deviceManagement,
+    support,
     oauthClients,
     registry,
     config: deps.config,

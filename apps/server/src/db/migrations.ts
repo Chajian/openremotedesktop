@@ -151,4 +151,23 @@ export function runMigrations(db: BetterSqlite3.Database): void {
     })();
   }
 
+  if (!hasMigration(db, 8)) {
+    db.transaction(() => {
+      db.exec(`CREATE TABLE support_sessions (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL REFERENCES owner(id),
+        label TEXT NOT NULL,
+        invite_hash TEXT NOT NULL UNIQUE,
+        created_at INTEGER NOT NULL,
+        invite_expires_at INTEGER NOT NULL,
+        joined_at INTEGER,
+        device_id TEXT REFERENCES devices(id),
+        ended_at INTEGER,
+        ended_reason TEXT
+      );
+      CREATE INDEX idx_support_sessions_owner ON support_sessions(owner_id, created_at);`);
+      recordMigration(db, 8);
+    })();
+  }
+
 }

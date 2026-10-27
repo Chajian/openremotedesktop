@@ -4,8 +4,8 @@ import { t, type Locale, type MessageKey } from "./i18n.js";
 import { icon, type IconName } from "./icons.js";
 import { STYLES } from "./styles.js";
 
-export type NavKey = "overview" | "devices" | "chatgpt" | "settings";
-export type ShellContext = { locale: Locale; account: AccountSummary | null; nav: NavKey | null; path: string; csrf: string; publicBaseUrl: URL };
+export type NavKey = "overview" | "devices" | "chatgpt" | "settings" | "support";
+export type ShellContext = { locale: Locale; account: AccountSummary | null; nav: NavKey | null; path: string; csrf: string; publicBaseUrl: URL; supportEnabled?: boolean };
 
 export function hiddenInput(name: string, value: string): SafeHtml {
   return html`<input type="hidden" name="${name}" value="${value}">`;
@@ -25,13 +25,14 @@ function document(locale: Locale, title: string, body: SafeHtml, enhance: boolea
 const tabs: ReadonlyArray<{ key: NavKey; href: string; label: MessageKey; mobile: MessageKey; icon: IconName }> = [
   { key: "overview", href: "/dashboard", label: "nav.overview", mobile: "nav.overview", icon: "home" },
   { key: "devices", href: "/dashboard/devices", label: "nav.devices", mobile: "nav.devices", icon: "monitor" },
+  { key: "support", href: "/dashboard/support", label: "nav.support", mobile: "nav.support", icon: "shield" },
   { key: "chatgpt", href: "/dashboard/mcp", label: "nav.chatgpt", mobile: "nav.connect", icon: "messageText" },
   { key: "settings", href: "/dashboard/settings", label: "nav.settings", mobile: "nav.me", icon: "user" },
 ];
 export function appDocument(input: { ctx: ShellContext; title: string; body: SafeHtml; refreshSeconds?: number | undefined; fab?: boolean | undefined; enhance?: boolean | undefined }): string {
   const { ctx } = input;
-  const tab = (mobile: boolean) => tabs.map(item => html`<a class="${ctx.nav === item.key ? "on" : ""}" href="${item.href}"${ctx.nav === item.key ? html` aria-current="page"` : null}>${mobile ? icon(item.icon, 21) : null}<span>${t(ctx.locale, mobile ? item.mobile : item.label)}</span></a>`);
-  const content = html`<header class="nav"><div class="nav-in">${brand(ctx.locale)}<nav class="tabs" aria-label="${t(ctx.locale, "nav.primary")}">${tab(false)}</nav><div class="nav-right"><a class="btn btn-primary btn-sm" href="/dashboard/connect">${icon("plus", 15)}${t(ctx.locale, "nav.addComputer")}</a><a class="avatar" href="/dashboard/settings" title="${accountLabel(ctx.locale, ctx.account)}" aria-label="${accountLabel(ctx.locale, ctx.account)}">${ctx.account?.authSource === "github" ? (ctx.account.githubLogin?.[0] ?? "O") : "O"}</a></div></div></header><main class="wrap">${input.body}</main><footer class="lang-switch" style="padding-bottom:72px">${langSwitch(ctx.locale, ctx.path)}<span aria-hidden="true">·</span><form method="post" action="/dashboard/logout">${hiddenInput("csrf", ctx.csrf)}<button type="submit">${t(ctx.locale, "nav.signOut")}</button></form></footer>${input.fab ? html`<a class="btn btn-primary mfab" href="/dashboard/connect">${icon("plus", 17)}${t(ctx.locale, "nav.addComputer")}</a>` : null}<nav class="mtab" aria-label="${t(ctx.locale, "nav.mobile")}">${tab(true)}</nav>`;
+  const tab = (mobile: boolean) => tabs.filter(item => item.key !== "support" || ctx.supportEnabled).map(item => html`<a class="${ctx.nav === item.key ? "on" : ""}" href="${item.href}"${ctx.nav === item.key ? html` aria-current="page"` : null}>${mobile ? icon(item.icon, 21) : null}<span>${t(ctx.locale, mobile ? item.mobile : item.label)}</span></a>`);
+  const content = html`<header class="nav"><div class="nav-in">${brand(ctx.locale)}<nav class="tabs" aria-label="${t(ctx.locale, "nav.primary")}">${tab(false)}</nav><div class="nav-right"><a class="btn btn-primary btn-sm" href="/dashboard/connect">${icon("plus", 15)}${t(ctx.locale, "nav.addComputer")}</a><a class="avatar" href="/dashboard/settings" title="${accountLabel(ctx.locale, ctx.account)}" aria-label="${accountLabel(ctx.locale, ctx.account)}">${ctx.account?.authSource === "github" ? (ctx.account.githubLogin?.[0] ?? "O") : "O"}</a></div></div></header><main class="wrap">${input.body}</main><footer class="lang-switch" style="padding-bottom:72px">${langSwitch(ctx.locale, ctx.path)}<span aria-hidden="true">·</span><form method="post" action="/dashboard/logout">${hiddenInput("csrf", ctx.csrf)}<button type="submit">${t(ctx.locale, "nav.signOut")}</button></form></footer>${input.fab ? html`<a class="btn btn-primary mfab" href="/dashboard/connect">${icon("plus", 17)}${t(ctx.locale, "nav.addComputer")}</a>` : null}<nav class="${ctx.supportEnabled ? "mtab has-support" : "mtab"}" aria-label="${t(ctx.locale, "nav.mobile")}">${tab(true)}</nav>`;
   return document(ctx.locale, input.title, content, input.enhance ?? true, input.refreshSeconds);
 }
 export function soloDocument(input: { locale: Locale; title: string; body: SafeHtml; footer?: SafeHtml | undefined; langSwitchPath?: string | null | undefined; enhance?: boolean | undefined }): string {

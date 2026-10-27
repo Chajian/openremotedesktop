@@ -537,4 +537,5 @@ details.owner .inner { padding: 0 16px 16px; display: flex; flex-direction: colu
 .dcard-menu-pop a { display: block; padding: 8px 10px; border-radius: 8px; font-size: 13px; color: var(--text-2); }
 .dcard-menu-pop a:hover, .dcard-menu-pop a:focus-visible { background: var(--sunken); color: var(--text); }
 .dcard-menu-pop a.danger { color: var(--err); }
+.mtab.has-support { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 `;

@@ -7,6 +7,10 @@ export type ServerConfig = {
   additionalPublicBaseUrls?: URL[];
   environment: ServerEnvironment;
   agentInstallEnabled?: boolean;
+  /** Pilot gate for temporary customer support; off until supported Agent is released. */
+  supportEnabled?: boolean;
+  /** Exact published version whose packaged CLI implements support mode. */
+  supportAgentVersion?: string;
   /** Retention for minimal device deletion audit events; default 30 days. */
   deviceDeletionAuditRetentionDays?: number;
   githubClientId?: string;
@@ -91,6 +95,16 @@ export function loadServerConfig(
     throw new Error("ODR_DEVICE_DELETION_AUDIT_RETENTION_DAYS must be 1..3650");
   }
 
+  const supportAgentVersion = env.ODR_SUPPORT_AGENT_VERSION?.trim();
+  if (supportAgentVersion) {
+    if (!/^[0-9]+[.][0-9]+[.][0-9]+$/.test(supportAgentVersion)) {
+      throw new Error("ODR_SUPPORT_AGENT_VERSION must be an exact stable semver");
+    }
+    const [major, minor, patch] = supportAgentVersion.split(".").map(Number);
+    if (major === 0 && (minor! < 1 || (minor === 1 && patch! < 4))) {
+      throw new Error("Support mode requires a newer Agent than 0.1.3");
+    }
+  }
   const githubClientId = env.ODR_GITHUB_CLIENT_ID?.trim();
   const githubClientSecret = env.ODR_GITHUB_CLIENT_SECRET?.trim();
   if (Boolean(githubClientId) !== Boolean(githubClientSecret)) {
@@ -103,6 +117,8 @@ export function loadServerConfig(
     ...(additionalPublicBaseUrls.length ? { additionalPublicBaseUrls } : {}),
     environment,
     agentInstallEnabled: env.ODR_AGENT_INSTALL_ENABLED === "true",
+    supportEnabled: env.ODR_SUPPORT_ENABLED === "true",
+    ...(supportAgentVersion ? {supportAgentVersion} : {}),
     deviceDeletionAuditRetentionDays,
     listenHost,
     listenPort,

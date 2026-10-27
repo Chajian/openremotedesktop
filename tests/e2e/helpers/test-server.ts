@@ -44,7 +44,7 @@ async function expectOk(response: Response): Promise<Response> {
 export type TestServer = Awaited<ReturnType<typeof startTestServer>>;
 
 export async function startTestServer(
-  options: { databasePath?: string; port?: number } = {},
+  options: { databasePath?: string; port?: number; supportEnabled?: boolean } = {},
 ) {
   const dataDir =
     options.databasePath === undefined
@@ -60,6 +60,7 @@ export async function startTestServer(
       databasePath,
       publicBaseUrl: baseUrl,
       environment: "test",
+      supportEnabled: options.supportEnabled === true,
     },
   });
   let relayApp: ReturnType<typeof buildApp> | undefined;

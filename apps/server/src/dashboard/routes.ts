@@ -5,6 +5,8 @@ import { renderDeviceDetail } from "./views/device-detail.js";
 import { renderMcp, displayClient } from "./views/mcp.js";
 import { renderSettings, type PasswordError } from "./views/settings.js";
 import { renderConfirm } from "./views/confirm.js";
+import { renderSupportDashboard, renderSupportCreated } from "./views/support.js";
+import { SupportNotFoundError, type SupportService } from "../support/support-service.js";
 import type { NavKey, ShellContext } from "./ui/components.js";
 import { renderLogin } from "./views/login.js";
 import { renderErrorPage } from "./views/error.js";
@@ -96,6 +98,7 @@ export function registerDashboardRoutes(
     pairings: PairingService;
     devices: DeviceRepository;
     deviceManagement: DeviceManagementService;
+    support: SupportService;
     oauthClients: OAuthClientRepository;
     registry: ConnectionRegistry;
     config: ServerConfig;
@@ -105,10 +108,15 @@ export function registerDashboardRoutes(
 
   function ownedDevices(ownerId: string): LiveDevice[] {
     const live = new Map(deps.registry.snapshot().map(s => [s.deviceId, s.state]));
-    return deps.devices.listOwnedDevices(ownerId).map(d => ({ ...d, state: d.revokedAt !== null ? "REVOKED" : (live.get(d.id) ?? "OFFLINE") }));
+    const temporary = deps.config.supportEnabled ? new Set(deps.support.listOwned(ownerId)
+      .filter(s => s.state === "active" && s.deviceId !== null).map(s => s.deviceId)) : new Set<string>();
+    return deps.devices.listOwnedDevices(ownerId).map(d => ({ ...d,
+      state: d.revokedAt !== null ? "REVOKED" : (live.get(d.id) ?? "OFFLINE"),
+      isSupport: temporary.has(d.id),
+    }));
   }
   function shell(request: FastifyRequest, auth: AuthenticatedDashboard, nav: NavKey | null): ShellContext {
-    return { locale: localeFromRequest(request), account: deps.owners.getAccountSummary(auth.principal.ownerId), nav, path: request.url, csrf: csrf.tokenFor(auth.sessionToken), publicBaseUrl: publicBaseUrlForHost(deps.config, request.headers.host) };
+    return { locale: localeFromRequest(request), account: deps.owners.getAccountSummary(auth.principal.ownerId), nav, path: request.url, csrf: csrf.tokenFor(auth.sessionToken), publicBaseUrl: publicBaseUrlForHost(deps.config, request.headers.host), supportEnabled: deps.config.supportEnabled === true || deps.support.listOwned(auth.principal.ownerId).some(s => s.state === "active") };
   }
   function dashboardError(request: FastifyRequest, reply: FastifyReply, auth: AuthenticatedDashboard, status: number, kind: "invalid" | "notFound" | "forbidden", backHref = "/dashboard/devices") {
     const ctx = shell(request, auth, backHref.startsWith("/dashboard/mcp") ? "chatgpt" : backHref.startsWith("/dashboard/settings") ? "settings" : "devices");
@@ -118,6 +126,57 @@ export function registerDashboardRoutes(
     interactivePage(reply);
     return reply.type("text/html; charset=utf-8").send(renderDeviceDetail(shell(request, auth, "devices"), { device, now: Date.now(), renameError, paired: (request.query as Record<string, unknown>).paired === "1", hasClients: deps.oauthClients.listApprovedClients(auth.principal.ownerId).length > 0 }));
   }
+
+  app.get("/dashboard/support", async (request, reply) => {
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth) return;
+    const sessions = deps.support.listOwned(auth.principal.ownerId);
+    const statuses = new Map(deps.registry.snapshot().map(s => [s.deviceId, s.state]));
+    return reply.type("text/html; charset=utf-8").send(
+      renderSupportDashboard(shell(request, auth, "support"), sessions, statuses, deps.config.supportEnabled === true));
+  });
+
+  app.post("/dashboard/support/create", async (request, reply) => {
+    if (!deps.config.supportEnabled) return reply.code(404).send();
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth || !requireCsrf(request, reply, auth, csrf, shell(request, auth, "support"), "/dashboard/support")) return;
+    const label = bodyRecord(request).label;
+    if (typeof label !== "string" || !label.trim() || label.length > 80)
+      return dashboardError(request, reply, auth, 400, "invalid", "/dashboard/support");
+    const { session, invite } = deps.support.create(auth.principal.ownerId, label);
+    interactivePage(reply);
+    return reply.type("text/html; charset=utf-8").send(
+      renderSupportCreated(shell(request, auth, "support"), invite, session));
+  });
+
+  app.get("/dashboard/support/:sessionId/end", async (request, reply) => {
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth) return;
+    const { sessionId } = request.params as {sessionId:string};
+    const session = deps.support.listOwned(auth.principal.ownerId).find(s => s.id === sessionId);
+    if (!session) return dashboardError(request, reply, auth, 404, "notFound", "/dashboard/support");
+    const ctx = shell(request, auth, "support");
+    return reply.type("text/html; charset=utf-8").send(renderConfirm(ctx, {
+      title: t(ctx.locale, "support.endConfirm", {name:session.label}),
+      bullets: [t(ctx.locale,"support.endConsequences"), t(ctx.locale,"confirm.noFiles")],
+      action: "/dashboard/support/" + encodeURIComponent(sessionId) + "/end",
+      cancelHref: "/dashboard/support", submitLabel:t(ctx.locale,"support.end"),danger:true,
+    }));
+  });
+
+  app.post("/dashboard/support/:sessionId/end", async (request, reply) => {
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth || !requireCsrf(request, reply, auth, csrf, shell(request, auth, "support"), "/dashboard/support")) return;
+    const { sessionId } = request.params as { sessionId: string };
+    try {
+      deps.support.endOwned(sessionId, auth.principal.ownerId);
+      return redirect(reply, "/dashboard/support", 303);
+    } catch (error) {
+      if (error instanceof SupportNotFoundError)
+        return dashboardError(request, reply, auth, 404, "notFound", "/dashboard/support");
+      throw error;
+    }
+  });
 
   app.get("/dashboard/devices", async (request, reply) => {
     const auth = requireDashboardAuth(request, reply, deps.sessions);
