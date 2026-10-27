@@ -18,6 +18,7 @@ import { RequestBroker } from "./relay/request-broker.js";
 import { registerRelayRoute } from "./relay/relay-route.js";
 import { DeviceAuthService } from "./devices/device-auth.js";
 import { DeviceRepository } from "./devices/device-repository.js";
+import { DeviceManagementService } from "./devices/device-management-service.js";
 import { PairingService } from "./devices/pairing-service.js";
 import { registerBootstrapRoutes } from "./routes/bootstrap.js";
 import { registerDevicePairingRoutes } from "./routes/device-pairing.js";
@@ -49,7 +50,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
       path === "/api/bootstrap" ||
       /^\/api\/device-pairings\/[^/]+\/approve$/.test(path) ||
       path.startsWith("/api/devices/")
-    )) || (method === "PATCH" && path.startsWith("/api/devices/"));
+    )) || ((method === "PATCH" || method === "DELETE") && path.startsWith("/api/devices/"));
     if (!protectedApi) return;
     const origin = request.headers.origin;
     const fetchSite = request.headers["sec-fetch-site"];
@@ -73,16 +74,24 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
   const deviceAuth = new DeviceAuthService(deps.db, devices);
   const registry = new ConnectionRegistry();
   const broker = new RequestBroker(registry);
+  const deviceManagement = new DeviceManagementService(devices, registry, broker);
   const logger = createServerLogger();
   const operationRepository = new OperationRepository(deps.db);
   const operations = new OperationService(operationRepository, broker, new OwnedOperationAccessPolicy(devices), {logger});
   // Startup still fails fast on an unusable database. Periodic pruning must not.
   operationRepository.cleanup();
+  const deletionAuditRetentionDays = deps.config.deviceDeletionAuditRetentionDays ?? 30;
+  devices.pruneDeletionAudit(deletionAuditRetentionDays);
   const operationCleanup = setInterval(() => {
     try {
       operationRepository.cleanup();
     } catch (error) {
       logMaintenanceFailure(logger, "operation.cleanup_failed", error);
+    }
+    try {
+      devices.pruneDeletionAudit(deletionAuditRetentionDays);
+    } catch (error) {
+      logMaintenanceFailure(logger, "device_deletion_audit.cleanup_failed", error);
     }
   }, 60_000);
   operationCleanup.unref();
@@ -94,7 +103,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
   registerOAuthDiscoveryAndDcr(app, oauthClients, deps.config);
   registerOAuthFlowRoutes(app, oauth, sessions, deps.config);
   registerDevicePairingRoutes(app, pairings, sessions, deps.config);
-  registerDeviceRoutes(app, devices, deviceAuth, sessions);
+  registerDeviceRoutes(app, devices, deviceAuth, sessions, deviceManagement);
   void app.register(async (relayApp) => {
     await relayApp.register(websocket);
     registerRelayRoute(relayApp, deviceAuth, devices, registry, broker, logger);
@@ -118,6 +127,7 @@ export function buildApp(deps: AppDependencies): FastifyInstance {
     sessions,
     pairings,
     devices,
+    deviceManagement,
     oauthClients,
     registry,
     config: deps.config,

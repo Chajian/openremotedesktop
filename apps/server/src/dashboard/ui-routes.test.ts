@@ -218,7 +218,7 @@ describe("Bridge login", () => {
 });
 
 const viewCtx = { locale: "en" as const, account: null, nav: "devices" as const, path: "/dashboard/devices", csrf: "test-csrf", publicBaseUrl: new URL("https://remote.example.com") };
-const sampleDevice: Device = { id: "00000000-0000-4000-8000-000000000001", name: "<b>Work PC</b>", ownerId: "owner", platform: "win32", agentVersion: "0.1.0", desktopCommanderVersion: "0.2.52", createdAt: 1_000, lastSeenAt: 2_000, revokedAt: null };
+const sampleDevice: Device = { id: "00000000-0000-4000-8000-000000000001", name: "<b>Work PC</b>", ownerId: "owner", platform: "win32", agentVersion: "0.1.0", desktopCommanderVersion: "0.2.52", createdAt: 1_000, lastSeenAt: 2_000, revokedAt: null, deletedAt: null };
 
 describe("Bridge device pages", () => {
   it("requires a session for each new device page", async () => {
@@ -272,6 +272,45 @@ describe("Bridge device pages", () => {
     expect(devices.findById(device.id)?.revokedAt).toBeNull();
     const response = await app.inject({ method: "POST", url: `/dashboard/devices/${device.id}/revoke`, headers: { cookie }, payload: { csrf: csrfFrom(page.body) } });
     expect(response.statusCode).toBe(303); expect(response.headers.location).toBe(`/dashboard/devices/${device.id}`); expect(devices.findById(device.id)?.revokedAt).not.toBeNull();
+  });
+  it("shows delete in card and detail, confirms it, and rejects invalid CSRF", async () => {
+    const { app, db, login, ownerId } = await fixture();
+    const { cookie } = await login();
+    const devices = new DeviceRepository(db);
+    const device = devices.create("Retired laptop", ownerId);
+    const list = await app.inject({method:"GET",url:"/dashboard/devices",headers:{cookie}});
+    expect(list.body).toContain(`/dashboard/devices/${device.id}/delete`);
+    const detail = await app.inject({method:"GET",url:`/dashboard/devices/${device.id}`,headers:{cookie}});
+    expect(detail.body).toContain(`/dashboard/devices/${device.id}/delete`);
+    const confirm = await app.inject({method:"GET",url:`/dashboard/devices/${device.id}/delete`,headers:{cookie}});
+    expect(confirm.body).toContain("Retired laptop");
+    expect(confirm.body).toContain(`action="/dashboard/devices/${device.id}/delete"`);
+    const target = `/dashboard/devices/${device.id}/delete`;
+    expect((await app.inject({method:"POST",url:target,headers:{cookie},payload:{csrf:"invalid"}})).statusCode).toBe(403);
+    expect(devices.findById(device.id)).not.toBeNull();
+    const valid = await app.inject({method:"POST",url:target,headers:{cookie},payload:{csrf:csrfFrom(confirm.body)}});
+    expect(valid.statusCode).toBe(303);
+    expect(valid.headers.location).toBe("/dashboard/devices?deleted=1");
+    expect((await app.inject({method:"GET",url:valid.headers.location!,headers:{cookie}})).body).toContain("Device deleted.");
+    expect((await app.inject({method:"GET",url:"/dashboard/devices?status=revoked",headers:{cookie}})).body).not.toContain(device.id);
+    expect((await app.inject({method:"GET",url:`/dashboard/devices/${device.id}`,headers:{cookie}})).statusCode).toBe(404);
+    expect((await app.inject({method:"POST",url:target,headers:{cookie},payload:{csrf:csrfFrom(confirm.body)}})).statusCode).toBe(303);
+  });
+  it("deletes an already-revoked device and rejects another owner's delete confirmation", async () => {
+    const { app, db, login, ownerId } = await fixture();
+    const { cookie } = await login();
+    const devices = new DeviceRepository(db);
+    const retired = devices.create("Old PC",ownerId);
+    devices.revokeOwnedDevice(retired.id,ownerId);
+    const foreign = new OwnerRepository(db).findOrCreateGitHubUser("9003", "guest");
+    const theirs = devices.create("Private PC",foreign.id);
+    expect((await app.inject({method:"GET",url:`/dashboard/devices/${theirs.id}/delete`,headers:{cookie}})).statusCode).toBe(404);
+    const confirm = await app.inject({method:"GET",url:`/dashboard/devices/${retired.id}/delete`,headers:{cookie}});
+    expect(confirm.statusCode).toBe(200);
+    const result = await app.inject({method:"POST",url:`/dashboard/devices/${retired.id}/delete`,headers:{cookie},payload:{csrf:csrfFrom(confirm.body)}});
+    expect(result.statusCode).toBe(303);
+    expect(devices.findById(retired.id)).toBeNull();
+    expect(devices.findById(theirs.id)).not.toBeNull();
   });
   it("renames without changing the device ID and renders invalid-name feedback at 400", async () => {
     const { app, db, login, ownerId } = await fixture(); const { cookie } = await login(); const devices = new DeviceRepository(db); const device = devices.create("Old name", ownerId);

@@ -57,7 +57,7 @@ export function createServerLogger(
 /** Maintenance runs opportunistically: reporting failures must never crash a request or timer. */
 export function logMaintenanceFailure(
   logger: Pick<ServerLogger, "event"> | undefined,
-  event: "operation.cleanup_failed" | "relay.sweep_failed",
+  event: "operation.cleanup_failed" | "relay.sweep_failed" | "device_deletion_audit.cleanup_failed",
   error: unknown,
 ): void {
   // Report only recognized machine-readable SQLite codes, never raw SQL,

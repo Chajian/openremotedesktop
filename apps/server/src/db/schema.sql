@@ -79,8 +79,17 @@ CREATE TABLE devices (
   desktop_commander_version TEXT,
   created_at INTEGER NOT NULL,
   last_seen_at INTEGER,
-  revoked_at INTEGER
+  revoked_at INTEGER,
+  deleted_at INTEGER
 );
+
+CREATE TABLE device_deletion_events (
+  device_id TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  deleted_at INTEGER NOT NULL
+);
+CREATE INDEX idx_device_deletion_events_time ON device_deletion_events(deleted_at);
+CREATE INDEX idx_devices_deleted_at ON devices(deleted_at);
 
 CREATE TABLE device_pairings (
   device_code_hash TEXT PRIMARY KEY,

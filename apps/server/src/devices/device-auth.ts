@@ -49,7 +49,8 @@ export class DeviceAuthService {
          JOIN devices d ON d.id = dc.device_id
          WHERE dc.refresh_hash = ?
            AND dc.revoked_at IS NULL
-           AND d.revoked_at IS NULL`,
+           AND d.revoked_at IS NULL
+           AND d.deleted_at IS NULL`,
       )
       .get(hashSecret(refreshCredential)) as { deviceId: string } | undefined;
 
@@ -87,7 +88,8 @@ export class DeviceAuthService {
          WHERE dat.token_hash = ?
            AND dat.revoked_at IS NULL
            AND dat.expires_at > ?
-           AND d.revoked_at IS NULL`,
+           AND d.revoked_at IS NULL
+           AND d.deleted_at IS NULL`,
       )
       .get(hashSecret(accessToken), now) as { deviceId: string } | undefined;
 

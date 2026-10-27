@@ -89,6 +89,30 @@ Revoking a device invalidates its server-side device credentials/tokens for new 
 
 Revocation cannot undo actions already executed and cannot erase a copied credential from a compromised machine. If compromise is suspected, revoke the device, rotate the Owner passphrase if appropriate, and inspect the host.
 
+## Device deletion
+
+Account owners can delete a device separately from revoking it. Deletion
+sets a non-reversible `deleted_at` tombstone and revokes both refresh
+credentials and short-lived access tokens in one database transaction.
+An online Relay socket is detached and closed, while pending remote tool
+calls are classified as ambiguous if already dispatched. Deleted devices
+are excluded from account lists and MCP discovery, including the revoked
+devices filter. Old Agent credentials cannot restore access.
+
+The tombstone retains only its device ID, owner relationship and required
+lifecycle timestamps so operation-history references remain stable; names,
+platform/version metadata and last-seen information are scrubbed. Separate
+minimal deletion audit events are purged after 30 days by default, adjustable
+using `ODR_DEVICE_DELETION_AUDIT_RETENTION_DAYS` (1..3650). No tool bodies
+or customer file contents are stored by deletion.
+
+Deployment/rollback: take a SQLite backup before the migration (V7 adds an
+optional `deleted_at` field and an audit table). Rolling back Server
+binaries alone cannot restore revoked credentials; older binaries may show
+a scrubbed tombstone as a revoked device because they do not filter
+`deleted_at`. Prefer a forward fix over restoring historical credentials.
+Never restore a database backup over newer legitimate authorization changes.
+
 ## Ambiguous execution
 
 A network loss can occur after a side-effecting command ran but before its result reached the Server. Open Desktop Remote reports this as `EXECUTION_UNKNOWN` and does not automatically repeat the call.

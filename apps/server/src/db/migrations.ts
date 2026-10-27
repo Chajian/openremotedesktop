@@ -137,4 +137,18 @@ export function runMigrations(db: BetterSqlite3.Database): void {
     })();
   }
 
+  if (!hasMigration(db, 7)) {
+    db.transaction(() => {
+      db.exec(`ALTER TABLE devices ADD COLUMN deleted_at INTEGER;
+        CREATE INDEX idx_devices_deleted_at ON devices(deleted_at);
+        CREATE TABLE device_deletion_events (
+          device_id TEXT NOT NULL,
+          owner_id TEXT NOT NULL,
+          deleted_at INTEGER NOT NULL
+        );
+        CREATE INDEX idx_device_deletion_events_time ON device_deletion_events(deleted_at);`);
+      recordMigration(db, 7);
+    })();
+  }
+
 }

@@ -7,6 +7,8 @@ export type ServerConfig = {
   additionalPublicBaseUrls?: URL[];
   environment: ServerEnvironment;
   agentInstallEnabled?: boolean;
+  /** Retention for minimal device deletion audit events; default 30 days. */
+  deviceDeletionAuditRetentionDays?: number;
   githubClientId?: string;
   githubClientSecret?: string;
 };
@@ -82,6 +84,13 @@ export function loadServerConfig(
     throw new Error("ODR_ADDITIONAL_PUBLIC_BASE_URLS contains a duplicate origin");
   }
 
+  const retentionRaw = env.ODR_DEVICE_DELETION_AUDIT_RETENTION_DAYS ?? "30";
+  const deviceDeletionAuditRetentionDays = Number(retentionRaw);
+  if (!Number.isSafeInteger(deviceDeletionAuditRetentionDays) ||
+      deviceDeletionAuditRetentionDays < 1 || deviceDeletionAuditRetentionDays > 3650) {
+    throw new Error("ODR_DEVICE_DELETION_AUDIT_RETENTION_DAYS must be 1..3650");
+  }
+
   const githubClientId = env.ODR_GITHUB_CLIENT_ID?.trim();
   const githubClientSecret = env.ODR_GITHUB_CLIENT_SECRET?.trim();
   if (Boolean(githubClientId) !== Boolean(githubClientSecret)) {
@@ -94,6 +103,7 @@ export function loadServerConfig(
     ...(additionalPublicBaseUrls.length ? { additionalPublicBaseUrls } : {}),
     environment,
     agentInstallEnabled: env.ODR_AGENT_INSTALL_ENABLED === "true",
+    deviceDeletionAuditRetentionDays,
     listenHost,
     listenPort,
   };

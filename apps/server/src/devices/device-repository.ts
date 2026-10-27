@@ -11,6 +11,7 @@ export type Device = {
   createdAt: number;
   lastSeenAt: number | null;
   revokedAt: number | null;
+  deletedAt: number | null;
 };
 
 type DeviceRow = {
@@ -23,6 +24,7 @@ type DeviceRow = {
   created_at: number;
   last_seen_at: number | null;
   revoked_at: number | null;
+  deleted_at: number | null;
 };
 
 function mapDevice(row: DeviceRow): Device {
@@ -36,6 +38,7 @@ function mapDevice(row: DeviceRow): Device {
     createdAt: row.created_at,
     lastSeenAt: row.last_seen_at,
     revokedAt: row.revoked_at,
+    deletedAt: row.deleted_at,
   };
 }
 
@@ -49,6 +52,15 @@ export class DeviceNotFoundError extends Error {
 export class DeviceRepository {
   constructor(private readonly db: BetterSqlite3.Database) {}
 
+  private revokeCredentialTokens(deviceId: string, at: number): void {
+    this.db.prepare(
+      "UPDATE device_credentials SET revoked_at = COALESCE(revoked_at, ?) WHERE device_id = ?",
+    ).run(at, deviceId);
+    this.db.prepare(
+      "UPDATE device_access_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE device_id = ?",
+    ).run(at, deviceId);
+  }
+
   create(name: string, ownerId: string): Device {
     const device: Device = {
       id: randomUUID(),
@@ -60,6 +72,7 @@ export class DeviceRepository {
       createdAt: Date.now(),
       lastSeenAt: null,
       revokedAt: null,
+      deletedAt: null,
     };
     this.db
       .prepare(
@@ -72,7 +85,7 @@ export class DeviceRepository {
   findById(deviceId: string): Device | null {
     const row = this.db
       .prepare(
-        "SELECT id, name, owner_id, platform, agent_version, desktop_commander_version, created_at, last_seen_at, revoked_at FROM devices WHERE id = ?",
+        "SELECT id, name, owner_id, platform, agent_version, desktop_commander_version, created_at, last_seen_at, revoked_at, deleted_at FROM devices WHERE id = ? AND deleted_at IS NULL",
       )
       .get(deviceId) as DeviceRow | undefined;
     return row ? mapDevice(row) : null;
@@ -81,7 +94,7 @@ export class DeviceRepository {
   listDevices(): Device[] {
     const rows = this.db
       .prepare(
-        "SELECT id, name, owner_id, platform, agent_version, desktop_commander_version, created_at, last_seen_at, revoked_at FROM devices ORDER BY created_at, id",
+        "SELECT id, name, owner_id, platform, agent_version, desktop_commander_version, created_at, last_seen_at, revoked_at, deleted_at FROM devices WHERE deleted_at IS NULL ORDER BY created_at, id",
       )
       .all() as DeviceRow[];
     return rows.map(mapDevice);
@@ -107,7 +120,7 @@ export class DeviceRepository {
              agent_version = COALESCE(?, agent_version),
              desktop_commander_version = COALESCE(?, desktop_commander_version),
              last_seen_at = ?
-         WHERE id = ? AND revoked_at IS NULL`,
+         WHERE id = ? AND revoked_at IS NULL AND deleted_at IS NULL`,
       )
       .run(
         metadata.platform ?? null,
@@ -125,7 +138,7 @@ export class DeviceRepository {
     if (existing.revokedAt !== null) return existing;
 
     this.db
-      .prepare("UPDATE devices SET last_seen_at = ? WHERE id = ? AND revoked_at IS NULL")
+      .prepare("UPDATE devices SET last_seen_at = ? WHERE id = ? AND revoked_at IS NULL AND deleted_at IS NULL")
       .run(at, deviceId);
     return this.findById(deviceId)!;
   }
@@ -134,7 +147,7 @@ export class DeviceRepository {
     const normalized = name.trim();
     if (!normalized) throw new TypeError("Device name must not be empty");
     const result = this.db
-      .prepare("UPDATE devices SET name = ? WHERE id = ?")
+      .prepare("UPDATE devices SET name = ? WHERE id = ? AND deleted_at IS NULL")
       .run(normalized, deviceId);
     if (result.changes !== 1) throw new DeviceNotFoundError(deviceId);
     return this.findById(deviceId)!;
@@ -149,16 +162,7 @@ export class DeviceRepository {
       this.db
         .prepare("UPDATE devices SET revoked_at = ? WHERE id = ?")
         .run(revokedAt, deviceId);
-      this.db
-        .prepare(
-          "UPDATE device_credentials SET revoked_at = COALESCE(revoked_at, ?) WHERE device_id = ?",
-        )
-        .run(revokedAt, deviceId);
-      this.db
-        .prepare(
-          "UPDATE device_access_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE device_id = ?",
-        )
-        .run(revokedAt, deviceId);
+      this.revokeCredentialTokens(deviceId, revokedAt);
       return this.findById(deviceId)!;
     })();
   }
@@ -167,7 +171,7 @@ export class DeviceRepository {
     const now = Date.now();
     return this.db.transaction(() => {
       const result = this.db
-        .prepare("UPDATE devices SET revoked_at = COALESCE(revoked_at, ?)")
+        .prepare("UPDATE devices SET revoked_at = COALESCE(revoked_at, ?) WHERE deleted_at IS NULL")
         .run(now);
       this.db
         .prepare(
@@ -185,7 +189,7 @@ export class DeviceRepository {
 
   listOwnedDevices(ownerId: string): Device[] {
     const rows = this.db.prepare(
-      "SELECT id, name, owner_id, platform, agent_version, desktop_commander_version, created_at, last_seen_at, revoked_at FROM devices WHERE owner_id = ? ORDER BY created_at, id"
+      "SELECT id, name, owner_id, platform, agent_version, desktop_commander_version, created_at, last_seen_at, revoked_at, deleted_at FROM devices WHERE owner_id = ? AND deleted_at IS NULL ORDER BY created_at, id"
     ).all(ownerId) as DeviceRow[];
     return rows.map(mapDevice);
   }
@@ -206,9 +210,39 @@ export class DeviceRepository {
     return this.revokeDevice(deviceId);
   }
 
+  /** Atomically revoke credentials and leave a minimal deletion tombstone. */
+  deleteOwnedDevice(deviceId: string, ownerId: string): boolean {
+    return this.db.transaction(() => {
+      const row = this.db.prepare(
+        "SELECT owner_id AS ownerId, deleted_at AS deletedAt FROM devices WHERE id = ?",
+      ).get(deviceId) as { ownerId: string | null; deletedAt: number | null } | undefined;
+      if (!row || row.ownerId !== ownerId) throw new DeviceNotFoundError(deviceId);
+      if (row.deletedAt !== null) return false;
+      const now = Date.now();
+      this.db.prepare(
+        "UPDATE devices SET deleted_at = ?, revoked_at = COALESCE(revoked_at, ?), name = 'Deleted device', platform = NULL, agent_version = NULL, desktop_commander_version = NULL, last_seen_at = NULL WHERE id = ? AND deleted_at IS NULL",
+      ).run(now, now, deviceId);
+      this.revokeCredentialTokens(deviceId, now);
+      this.db.prepare("DELETE FROM device_pairings WHERE device_id = ?").run(deviceId);
+      this.db.prepare(
+        "INSERT INTO device_deletion_events (device_id, owner_id, deleted_at) VALUES (?, ?, ?)",
+      ).run(deviceId, ownerId, now);
+      return true;
+    })();
+  }
+
+  /** Remove audit events beyond the configured retention window; tombstones stay scrubbed. */
+  pruneDeletionAudit(retentionDays = 30, now = Date.now()): number {
+    if (!Number.isSafeInteger(retentionDays) || retentionDays < 1 || retentionDays > 3650) {
+      throw new RangeError("Deletion audit retention must be 1..3650 days");
+    }
+    return this.db.prepare("DELETE FROM device_deletion_events WHERE deleted_at < ?")
+      .run(now - retentionDays * 86_400_000).changes;
+  }
+
   revokeAllOwnedDevices(ownerId: string): number {
     return this.db.transaction(() => {
-      const ids = this.db.prepare("SELECT id FROM devices WHERE owner_id = ?")
+      const ids = this.db.prepare("SELECT id FROM devices WHERE owner_id = ? AND deleted_at IS NULL")
         .all(ownerId) as Array<{id: string}>;
       for (const {id} of ids) this.revokeDevice(id);
       return ids.length;

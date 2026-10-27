@@ -24,6 +24,7 @@ import {
   type SessionRepository,
 } from "../auth/session-repository.js";
 import { publicBaseUrlForHost, type ServerConfig } from "../config.js";
+import type { DeviceManagementService } from "../devices/device-management-service.js";
 import {
   DeviceNotFoundError,
   type DeviceRepository,
@@ -94,6 +95,7 @@ export function registerDashboardRoutes(
     sessions: SessionRepository;
     pairings: PairingService;
     devices: DeviceRepository;
+    deviceManagement: DeviceManagementService;
     oauthClients: OAuthClientRepository;
     registry: ConnectionRegistry;
     config: ServerConfig;
@@ -122,7 +124,8 @@ export function registerDashboardRoutes(
     if (!auth) return;
     const status = (request.query as Record<string, unknown>).status;
     const filter = status === "online" || status === "attention" || status === "revoked" ? status : "all";
-    return reply.type("text/html; charset=utf-8").send(renderDevices(shell(request, auth, "devices"), { devices: ownedDevices(auth.principal.ownerId), filter, now: Date.now() }));
+    const deleted = (request.query as Record<string, unknown>).deleted === "1";
+    return reply.type("text/html; charset=utf-8").send(renderDevices(shell(request, auth, "devices"), { devices: ownedDevices(auth.principal.ownerId), filter, now: Date.now(), deleted }));
   });
   app.get("/dashboard/devices/:deviceId", async (request, reply) => {
     const auth = requireDashboardAuth(request, reply, deps.sessions);
@@ -141,6 +144,22 @@ export function registerDashboardRoutes(
     const ctx = shell(request, auth, "devices");
     const path = "/dashboard/devices/" + encodeURIComponent(device.id);
     return reply.type("text/html; charset=utf-8").send(renderConfirm(ctx, { title: t(ctx.locale, "confirm.revokeDevice", { name: device.name }), bullets: (["confirm.credentials", "confirm.deviceAccess", "confirm.noFiles", "confirm.irreversible"] as const).map(key => t(ctx.locale, key)), action: path + "/revoke", submitLabel: t(ctx.locale, "device.revoke"), cancelHref: path, danger: true }));
+  });
+
+  app.get("/dashboard/devices/:deviceId/delete", async (request, reply) => {
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth) return;
+    const { deviceId } = request.params as { deviceId: string };
+    const device = ownedDevices(auth.principal.ownerId).find(d => d.id === deviceId);
+    if (!device) return dashboardError(request, reply, auth, 404, "notFound");
+    const ctx = shell(request, auth, "devices");
+    const path = "/dashboard/devices/" + encodeURIComponent(device.id);
+    return reply.type("text/html; charset=utf-8").send(renderConfirm(ctx, {
+      title: t(ctx.locale, "confirm.deleteDevice", { name: device.name, id: device.id.slice(-8) }),
+      bullets: (["confirm.deleteAccess", "confirm.deleteHidden", "confirm.noFiles", "confirm.irreversible"] as const).map(key => t(ctx.locale, key)),
+      action: path + "/delete", submitLabel: t(ctx.locale, "device.delete"),
+      cancelHref: path, danger: true,
+    }));
   });
 
   app.get("/dashboard/lang", async (request, reply) => {
@@ -237,7 +256,7 @@ export function registerDashboardRoutes(
     privateBrowserPage(reply);
     const { deviceId } = request.params as { deviceId: string };
     const device = deps.devices.findById(deviceId);
-    if (!device || device.ownerId !== auth.principal.ownerId) return reply.code(404).send({ error: "NOT_FOUND" });
+    if (!device || device.deletedAt !== null || device.ownerId !== auth.principal.ownerId) return reply.code(404).send({ error: "NOT_FOUND" });
     const state = device.revokedAt !== null ? "REVOKED" : deps.registry.get(device.id)?.state ?? "OFFLINE";
     return reply.send({ deviceId: device.id, state });
   });
@@ -337,6 +356,21 @@ export function registerDashboardRoutes(
     try {
       deps.devices.revokeOwnedDevice(deviceId, auth.principal.ownerId);
       return redirect(reply, "/dashboard/devices/" + encodeURIComponent(deviceId), 303);
+    } catch (error) {
+      if (error instanceof DeviceNotFoundError) return dashboardError(request, reply, auth, 404, "notFound");
+      throw error;
+    }
+  });
+
+  app.post("/dashboard/devices/:deviceId/delete", async (request, reply) => {
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth) return;
+    const { deviceId } = request.params as { deviceId: string };
+    if (!requireCsrf(request, reply, auth, csrf, shell(request, auth, "devices"),
+      "/dashboard/devices/" + encodeURIComponent(deviceId))) return;
+    try {
+      deps.deviceManagement.deleteOwnedDevice(deviceId, auth.principal.ownerId);
+      return redirect(reply, "/dashboard/devices?deleted=1", 303);
     } catch (error) {
       if (error instanceof DeviceNotFoundError) return dashboardError(request, reply, auth, 404, "notFound");
       throw error;

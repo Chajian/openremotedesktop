@@ -3,6 +3,7 @@ import {
   InvalidDeviceCredentialError,
   type DeviceAuthService,
 } from "../devices/device-auth.js";
+import type { DeviceManagementService } from "../devices/device-management-service.js";
 import {
   DeviceNotFoundError,
   type DeviceRepository,
@@ -21,6 +22,7 @@ export function registerDeviceRoutes(
   devices: DeviceRepository,
   deviceAuth: DeviceAuthService,
   sessions: SessionRepository,
+  deviceManagement: DeviceManagementService,
 ): void {
   app.post("/api/device-auth/refresh", async (request, reply) => {
     const body = request.body as { refreshCredential?: unknown } | null;
@@ -66,6 +68,19 @@ export function registerDeviceRoutes(
       if (error instanceof DeviceNotFoundError) {
         return reply.code(404).send({ error: "DEVICE_NOT_FOUND" });
       }
+      throw error;
+    }
+  });
+
+  app.delete("/api/devices/:deviceId", async (request, reply) => {
+    const owner = requireOwner(request, sessions);
+    if (!owner) return reply.code(401).send({ error: "UNAUTHORIZED" });
+    const { deviceId } = request.params as { deviceId: string };
+    try {
+      deviceManagement.deleteOwnedDevice(deviceId, owner.ownerId);
+      return reply.code(204).send();
+    } catch (error) {
+      if (error instanceof DeviceNotFoundError) return reply.code(404).send({ error: "DEVICE_NOT_FOUND" });
       throw error;
     }
   });
