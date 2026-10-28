@@ -8,3 +8,7 @@
 # Same two public integrity hashes after PR #9 was rebased onto master.
 49512372c8d19575c6510ae21f85c46f403f5324:scripts/upstream-desktop-commander-0.2.52.json:generic-api-key:50
 49512372c8d19575c6510ae21f85c46f403f5324:scripts/upstream-desktop-commander-0.2.52.json:generic-api-key:51
+# Two references to the same synthetic password in an isolated :memory: login test.
+# Current source uses an explicit test passphrase; only these historical findings are ignored.
+37f58445326310067d5b2d4e6e2b2266de123eb9:apps/server/src/devices/device-deletion.test.ts:generic-api-key:72
+37f58445326310067d5b2d4e6e2b2266de123eb9:apps/server/src/devices/device-deletion.test.ts:generic-api-key:76

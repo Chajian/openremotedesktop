@@ -69,11 +69,11 @@ describe("device deletion", () => {
     const app = buildApp({db, config:{databasePath:":memory:", publicBaseUrl:new URL("https://remote.example.com"), environment:"test"}});
     try {
       const owners = new OwnerRepository(db);
-      const alice = await owners.bootstrapOwner({password:"secret-12345678"});
+      const alice = await owners.bootstrapOwner({password:"test-passphrase"});
       const bob = owners.findOrCreateGitHubUser("2222", "bob");
       const own = new DeviceRepository(db).create("Only Alice", alice.id);
       const other = new DeviceRepository(db).create("Only Bob", bob.id);
-      const login = await app.inject({method:"POST", url:"/api/login", payload:{password:"secret-12345678"}});
+      const login = await app.inject({method:"POST", url:"/api/login", payload:{password:"test-passphrase"}});
       const cookie = String(login.headers["set-cookie"]).split(";")[0]!;
       const sessions = new SessionRepository(db);
       const bobCookie = "odr_session=" + sessions.createOwnerSession(bob.id);
