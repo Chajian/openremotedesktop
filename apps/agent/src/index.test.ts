@@ -27,6 +27,16 @@ describe("agent CLI", () => {
     });
   });
 
+  it("parses the support command with a single-use invitation", () => {
+    const invite = "x".repeat(32);
+    expect(parseAgentCommand(["agent","support","--server","https://remote.example.com","--invite",invite]))
+      .toEqual({command:"support",serverUrl:new URL("https://remote.example.com"),invite});
+    expect(() => parseAgentCommand(["agent","support","--server","http://remote.example.com","--invite",invite]))
+      .toThrow(/HTTPS/);
+    expect(() => parseAgentCommand(["agent","support","--server","https://remote.example.com","--invite","bad"]))
+      .toThrow();
+  });
+
   it("rejects unsupported or incomplete commands", () => {
     expect(() => parseAgentCommand(["agent", "connect"])).toThrow();
     expect(() => parseAgentCommand(["agent", "unknown"])).toThrow();

@@ -89,6 +89,78 @@ Revoking a device invalidates its server-side device credentials/tokens for new 
 
 Revocation cannot undo actions already executed and cannot erase a copied credential from a compromised machine. If compromise is suspected, revoke the device, rotate the Owner passphrase if appropriate, and inspect the host.
 
+## Device deletion
+
+Account owners can delete a device separately from revoking it. Deletion
+sets a non-reversible `deleted_at` tombstone and revokes both refresh
+credentials and short-lived access tokens in one database transaction.
+An online Relay socket is detached and closed, while pending remote tool
+calls are classified as ambiguous if already dispatched. Deleted devices
+are excluded from account lists and MCP discovery, including the revoked
+devices filter. Old Agent credentials cannot restore access.
+
+The tombstone retains only its device ID, owner relationship and required
+lifecycle timestamps so operation-history references remain stable; names,
+platform/version metadata and last-seen information are scrubbed. Separate
+minimal deletion audit events are purged after 30 days by default, adjustable
+using `ODR_DEVICE_DELETION_AUDIT_RETENTION_DAYS` (1..3650). No tool bodies
+or customer file contents are stored by deletion.
+
+Deployment/rollback: take a SQLite backup before the migration (V7 adds an
+optional `deleted_at` field and an audit table). Rolling back Server
+binaries alone cannot restore revoked credentials; older binaries may show
+a scrubbed tombstone as a revoked device because they do not filter
+`deleted_at`. Prefer a forward fix over restoring historical credentials.
+Never restore a database backup over newer legitimate authorization changes.
+
+## Temporary remote support (feature-gated pilot)
+
+`ODR_SUPPORT_ENABLED` defaults to `false`. The pilot requires a
+compatible Windows Agent; the existing published 0.1.3 client does not
+automatically support `agent support`. Do not enable customer invitations
+until the matching Agent distribution has been built and verified.
+
+When a verified compatible npm Agent version is configured with
+\`ODR_SUPPORT_AGENT_VERSION\` and the official installer is enabled, the customer
+page offers a checksum-pinned HTTPS PowerShell installer. Otherwise it labels
+the source-checkout command as developer-only. The original published Agent
+version must not be misrepresented as supporting this command.
+
+An authenticated account owner creates a session. The one-time invitation is
+192 bits of randomness, stored only as its SHA-256 hash, expires after five
+minutes, and can be redeemed once without customer account creation. The
+customer's Agent must explicitly approve full tool access before redeeming it.
+Once joined, the temporary device inherits the creator account's authorized
+MCP clients, including multiple AI clients; it does not bypass the platform's
+own consent prompts.
+
+A joined session is not timed out automatically. The creator ends it in
+Dashboard or the customer can press Ctrl+C in the Agent's terminal to stop
+sharing; the customer stop endpoint verifies that device's refresh credential.
+Both revoke all device credentials, detach the live Relay socket and prevent
+new requests. A credential-possessor may query only the session's terminal
+state and reason after revocation via POST /api/support/status; this grants
+no tool access. Explicit owner/customer end states remain queryable even after
+the device is deleted. Directly deleting a device without an explicit session
+end instead returns 404 SUPPORT_NOT_FOUND, never an active support status.
+The Agent reports a normal exit only when an owner-ended
+state is verified after credential rejection and runtime shutdown succeeds.
+Other authentication, transport and executor-cleanup failures remain errors.
+The refresh credential issuance and active-credential lookup are shared with
+normal device pairing in a small device-credential component.
+If the Agent crashes or loses network connectivity, the session
+is left offline for the creator to end, not silently deleted. The temporary
+credential lives only in process memory, never in the durable OS keyring or
+credential file. Direct device deletion also makes its support session appear
+ended. Past side-effects cannot be undone by revocation.
+
+The server remains a trusted component and can read command contents, as in
+ordinary device mode. No GUI automation guarantee is implied by Desktop
+Commander tools. Invitation URLs must not be sent to analytics or third-party
+resources; customer pages use no-referrer and no-store headers. A customer
+installation distribution and signed Windows binary are still release gates,
+not proven by automated mocks or source-checkout tests.
+
 ## Ambiguous execution
 
 A network loss can occur after a side-effecting command ran but before its result reached the Server. Open Desktop Remote reports this as `EXECUTION_UNKNOWN` and does not automatically repeat the call.

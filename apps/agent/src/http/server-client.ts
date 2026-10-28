@@ -1,3 +1,13 @@
+export type SupportPreviewResponse = {
+  label: string; inviteExpiresAt: number; access: "full";
+};
+export type SupportJoinResponse = {
+  deviceId: string; refreshCredential: string; sessionId: string;
+};
+export type SupportStatusResponse =
+  | {state:"active"}
+  | {state:"ended";reason:"owner"|"customer"};
+
 export type PairingCreateResponse = {
   deviceCode: string;
   userCode: string;
@@ -53,6 +63,54 @@ export class ServerClient {
     private readonly baseUrl: URL,
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
+
+  async supportPreview(invite: string, signal?: AbortSignal): Promise<SupportPreviewResponse> {
+    const result = await this.request<unknown>(`/api/support/invite/${encodeURIComponent(invite)}`,
+      {method:"GET"}, signal);
+    if (!result || typeof result !== "object" || !("label" in result) ||
+        typeof result.label !== "string" || !("inviteExpiresAt" in result) ||
+        typeof result.inviteExpiresAt !== "number" || !Number.isFinite(result.inviteExpiresAt) ||
+        !("access" in result) || result.access !== "full") throw new ServerResponseError();
+    return result as SupportPreviewResponse;
+  }
+
+  async joinSupport(invite: string, deviceName: string, platform: string,
+    signal?: AbortSignal): Promise<SupportJoinResponse> {
+    const result = await this.request<unknown>("/api/support/join", {
+      method: "POST", headers: {"content-type":"application/json"},
+      body: JSON.stringify({invite, deviceName, platform}),
+    }, signal);
+    if (!result || typeof result !== "object" || !("deviceId" in result) ||
+        typeof result.deviceId !== "string" || !result.deviceId ||
+        !("refreshCredential" in result) || typeof result.refreshCredential !== "string" ||
+        !/^[A-Za-z0-9_-]{43}$/.test(result.refreshCredential) ||
+        !("sessionId" in result) || typeof result.sessionId !== "string" ||
+        !result.sessionId) throw new ServerResponseError();
+    return result as SupportJoinResponse;
+  }
+
+  /** Status uses the original refresh secret solely as evidence, not authority. */
+  async supportStatus(refreshCredential: string,
+    signal: AbortSignal = AbortSignal.timeout(5_000)): Promise<SupportStatusResponse> {
+    const status = await this.request<unknown>("/api/support/status", {
+      method: "POST", headers: {"content-type":"application/json"},
+      body: JSON.stringify({refreshCredential}),
+    }, signal);
+    if (!status || typeof status !== "object" || !("state" in status))
+      throw new ServerResponseError();
+    if (status.state === "active") return {state:"active"};
+    if (status.state === "ended" && "reason" in status &&
+        (status.reason === "owner" || status.reason === "customer"))
+      return {state:"ended",reason:status.reason};
+    throw new ServerResponseError();
+  }
+
+  async stopSupport(refreshCredential: string, signal: AbortSignal = AbortSignal.timeout(5_000)): Promise<void> {
+    await this.request<unknown>("/api/support/stop", {
+      method: "POST", headers: {"content-type":"application/json"},
+      body: JSON.stringify({refreshCredential}),
+    }, signal);
+  }
 
   async createPairing(signal?: AbortSignal): Promise<PairingCreateResponse> {
     return this.request<PairingCreateResponse>("/api/device-pairings", {

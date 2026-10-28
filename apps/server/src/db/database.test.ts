@@ -33,6 +33,7 @@ describe("database migrations", () => {
       expect(tableRows.map((row) => row.name)).toEqual([
         "device_access_tokens",
         "device_credentials",
+        "device_deletion_events",
         "device_pairings",
         "devices",
         "github_login_attempts",
@@ -45,6 +46,7 @@ describe("database migrations", () => {
         "owner_sessions",
         "schema_migrations",
         "settings",
+        "support_sessions",
       ]);
     } finally {
       db.close();
@@ -71,10 +73,21 @@ describe("database migrations", () => {
         { version: 4 },
         { version: 5 },
         { version: 6 },
+        { version: 7 },
+        { version: 8 },
       ]);
     } finally {
       db.close();
     }
+  });
+
+  it("migrates deletion state on new and upgraded databases", () => {
+    const db = createDatabase(createTempDatabasePath());
+    try {
+      const columns = db.pragma("table_info(devices)") as Array<{name: string}>;
+      expect(columns.map(c => c.name)).toContain("deleted_at");
+      expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='device_deletion_events'").get()).toEqual({name:"device_deletion_events"});
+    } finally {db.close();}
   });
 
   it("adds an authorization-code lineage column for token revocation", () => {

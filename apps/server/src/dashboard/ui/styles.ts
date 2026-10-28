@@ -527,4 +527,15 @@ details.owner .inner { padding: 0 16px 16px; display: flex; flex-direction: colu
 .lang-switch form{margin:0}.lang-switch button{border:0;background:none;color:inherit;font:inherit;cursor:pointer;padding:4px 8px}
 /* Secondary labels within cobalt buttons must keep AA text contrast. */
 .btn-primary .muted{color:#fff}
+/* Account-owned device action menu. Appended after baseline prototype CSS. */
+.dcard { overflow: visible; position: relative; }
+.dcard-top .chip { margin-left: auto; }
+.dcard-menu { position: relative; margin-left: 8px; z-index: 3; }
+.dcard-menu summary { display: flex; align-items: center; justify-content: center; cursor: pointer; list-style: none; }
+.dcard-menu summary::-webkit-details-marker { display: none; }
+.dcard-menu-pop { position: absolute; top: 34px; right: 0; width: 170px; display: grid; gap: 2px; padding: 6px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 12px; box-shadow: var(--sh-lg); }
+.dcard-menu-pop a { display: block; padding: 8px 10px; border-radius: 8px; font-size: 13px; color: var(--text-2); }
+.dcard-menu-pop a:hover, .dcard-menu-pop a:focus-visible { background: var(--sunken); color: var(--text); }
+.dcard-menu-pop a.danger { color: var(--err); }
+.mtab.has-support { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 `;

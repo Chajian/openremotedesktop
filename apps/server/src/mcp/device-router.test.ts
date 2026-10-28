@@ -13,6 +13,7 @@ const devices: Device[] = [
     createdAt: 1,
     lastSeenAt: 10,
     revokedAt: null,
+    deletedAt: null,
   },
   {
     id: "22222222-2222-4222-8222-222222222222",
@@ -24,6 +25,7 @@ const devices: Device[] = [
     createdAt: 2,
     lastSeenAt: 11,
     revokedAt: null,
+    deletedAt: null,
   },
 ];
 

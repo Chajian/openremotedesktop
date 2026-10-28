@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type BetterSqlite3 from "better-sqlite3";
 import type { DeviceRepository } from "./device-repository.js";
+import { DeviceCredentials } from "./device-credentials.js";
 
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
 
@@ -32,28 +33,20 @@ function hashSecret(value: string): string {
 
 export class DeviceAuthService {
   private readonly now: () => number;
+  private readonly credentials: DeviceCredentials;
 
   constructor(
     private readonly db: BetterSqlite3.Database,
     private readonly devices: DeviceRepository,
-    options: { now?: () => number } = {},
+    options: { now?: () => number; credentials?: DeviceCredentials } = {},
   ) {
     this.now = options.now ?? Date.now;
+    this.credentials = options.credentials ?? new DeviceCredentials(db);
   }
 
   refreshDeviceAccess(refreshCredential: string): DeviceAccessToken {
-    const row = this.db
-      .prepare(
-        `SELECT dc.device_id AS deviceId
-         FROM device_credentials dc
-         JOIN devices d ON d.id = dc.device_id
-         WHERE dc.refresh_hash = ?
-           AND dc.revoked_at IS NULL
-           AND d.revoked_at IS NULL`,
-      )
-      .get(hashSecret(refreshCredential)) as { deviceId: string } | undefined;
-
-    if (!row || !this.devices.findById(row.deviceId)) {
+    const deviceId = this.credentials.activeDeviceId(refreshCredential);
+    if (!deviceId || !this.devices.findById(deviceId)) {
       throw new InvalidDeviceCredentialError();
     }
 
@@ -68,13 +61,13 @@ export class DeviceAuthService {
       )
       .run(
         randomUUID(),
-        row.deviceId,
+        deviceId,
         hashSecret(accessToken),
         createdAt,
         expiresAt,
       );
 
-    return { accessToken, expiresAt, deviceId: row.deviceId };
+    return { accessToken, expiresAt, deviceId };
   }
 
   verifyDeviceAccess(accessToken: string): DevicePrincipal {
@@ -87,7 +80,8 @@ export class DeviceAuthService {
          WHERE dat.token_hash = ?
            AND dat.revoked_at IS NULL
            AND dat.expires_at > ?
-           AND d.revoked_at IS NULL`,
+           AND d.revoked_at IS NULL
+           AND d.deleted_at IS NULL`,
       )
       .get(hashSecret(accessToken), now) as { deviceId: string } | undefined;
 

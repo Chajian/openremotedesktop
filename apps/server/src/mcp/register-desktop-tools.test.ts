@@ -18,6 +18,7 @@ const device: Device = {
   createdAt: 1,
   lastSeenAt: 2,
   revokedAt: null,
+  deletedAt: null,
 };
 
 const foreignDeviceId = "22222222-2222-4222-8222-222222222222";

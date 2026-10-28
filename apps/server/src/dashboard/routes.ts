@@ -5,6 +5,8 @@ import { renderDeviceDetail } from "./views/device-detail.js";
 import { renderMcp, displayClient } from "./views/mcp.js";
 import { renderSettings, type PasswordError } from "./views/settings.js";
 import { renderConfirm } from "./views/confirm.js";
+import { renderSupportDashboard, renderSupportCreated } from "./views/support.js";
+import { SupportNotFoundError, type SupportService } from "../support/support-service.js";
 import type { NavKey, ShellContext } from "./ui/components.js";
 import { renderLogin } from "./views/login.js";
 import { renderErrorPage } from "./views/error.js";
@@ -24,6 +26,7 @@ import {
   type SessionRepository,
 } from "../auth/session-repository.js";
 import { publicBaseUrlForHost, type ServerConfig } from "../config.js";
+import type { DeviceManagementService } from "../devices/device-management-service.js";
 import {
   DeviceNotFoundError,
   type DeviceRepository,
@@ -94,6 +97,8 @@ export function registerDashboardRoutes(
     sessions: SessionRepository;
     pairings: PairingService;
     devices: DeviceRepository;
+    deviceManagement: DeviceManagementService;
+    support: SupportService;
     oauthClients: OAuthClientRepository;
     registry: ConnectionRegistry;
     config: ServerConfig;
@@ -103,10 +108,14 @@ export function registerDashboardRoutes(
 
   function ownedDevices(ownerId: string): LiveDevice[] {
     const live = new Map(deps.registry.snapshot().map(s => [s.deviceId, s.state]));
-    return deps.devices.listOwnedDevices(ownerId).map(d => ({ ...d, state: d.revokedAt !== null ? "REVOKED" : (live.get(d.id) ?? "OFFLINE") }));
+    const temporary = new Set(deps.support.activeDeviceIds(ownerId));
+    return deps.devices.listOwnedDevices(ownerId).map(d => ({ ...d,
+      state: d.revokedAt !== null ? "REVOKED" : (live.get(d.id) ?? "OFFLINE"),
+      isSupport: temporary.has(d.id),
+    }));
   }
   function shell(request: FastifyRequest, auth: AuthenticatedDashboard, nav: NavKey | null): ShellContext {
-    return { locale: localeFromRequest(request), account: deps.owners.getAccountSummary(auth.principal.ownerId), nav, path: request.url, csrf: csrf.tokenFor(auth.sessionToken), publicBaseUrl: publicBaseUrlForHost(deps.config, request.headers.host) };
+    return { locale: localeFromRequest(request), account: deps.owners.getAccountSummary(auth.principal.ownerId), nav, path: request.url, csrf: csrf.tokenFor(auth.sessionToken), publicBaseUrl: publicBaseUrlForHost(deps.config, request.headers.host), supportEnabled: deps.config.supportEnabled === true || deps.support.hasActiveSupport(auth.principal.ownerId) };
   }
   function dashboardError(request: FastifyRequest, reply: FastifyReply, auth: AuthenticatedDashboard, status: number, kind: "invalid" | "notFound" | "forbidden", backHref = "/dashboard/devices") {
     const ctx = shell(request, auth, backHref.startsWith("/dashboard/mcp") ? "chatgpt" : backHref.startsWith("/dashboard/settings") ? "settings" : "devices");
@@ -117,12 +126,64 @@ export function registerDashboardRoutes(
     return reply.type("text/html; charset=utf-8").send(renderDeviceDetail(shell(request, auth, "devices"), { device, now: Date.now(), renameError, paired: (request.query as Record<string, unknown>).paired === "1", hasClients: deps.oauthClients.listApprovedClients(auth.principal.ownerId).length > 0 }));
   }
 
+  app.get("/dashboard/support", async (request, reply) => {
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth) return;
+    const sessions = deps.support.listOwned(auth.principal.ownerId);
+    const statuses = new Map(deps.registry.snapshot().map(s => [s.deviceId, s.state]));
+    return reply.type("text/html; charset=utf-8").send(
+      renderSupportDashboard(shell(request, auth, "support"), sessions, statuses, deps.config.supportEnabled === true));
+  });
+
+  app.post("/dashboard/support/create", async (request, reply) => {
+    if (!deps.config.supportEnabled) return reply.code(404).send();
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth || !requireCsrf(request, reply, auth, csrf, shell(request, auth, "support"), "/dashboard/support")) return;
+    const label = bodyRecord(request).label;
+    if (typeof label !== "string" || !label.trim() || label.length > 80)
+      return dashboardError(request, reply, auth, 400, "invalid", "/dashboard/support");
+    const { session, invite } = deps.support.create(auth.principal.ownerId, label);
+    interactivePage(reply);
+    return reply.type("text/html; charset=utf-8").send(
+      renderSupportCreated(shell(request, auth, "support"), invite, session));
+  });
+
+  app.get("/dashboard/support/:sessionId/end", async (request, reply) => {
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth) return;
+    const { sessionId } = request.params as {sessionId:string};
+    const session = deps.support.listOwned(auth.principal.ownerId).find(s => s.id === sessionId);
+    if (!session) return dashboardError(request, reply, auth, 404, "notFound", "/dashboard/support");
+    const ctx = shell(request, auth, "support");
+    return reply.type("text/html; charset=utf-8").send(renderConfirm(ctx, {
+      title: t(ctx.locale, "support.endConfirm", {name:session.label}),
+      bullets: [t(ctx.locale,"support.endConsequences"), t(ctx.locale,"confirm.noFiles")],
+      action: "/dashboard/support/" + encodeURIComponent(sessionId) + "/end",
+      cancelHref: "/dashboard/support", submitLabel:t(ctx.locale,"support.end"),danger:true,
+    }));
+  });
+
+  app.post("/dashboard/support/:sessionId/end", async (request, reply) => {
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth || !requireCsrf(request, reply, auth, csrf, shell(request, auth, "support"), "/dashboard/support")) return;
+    const { sessionId } = request.params as { sessionId: string };
+    try {
+      deps.support.endOwned(sessionId, auth.principal.ownerId);
+      return redirect(reply, "/dashboard/support", 303);
+    } catch (error) {
+      if (error instanceof SupportNotFoundError)
+        return dashboardError(request, reply, auth, 404, "notFound", "/dashboard/support");
+      throw error;
+    }
+  });
+
   app.get("/dashboard/devices", async (request, reply) => {
     const auth = requireDashboardAuth(request, reply, deps.sessions);
     if (!auth) return;
     const status = (request.query as Record<string, unknown>).status;
     const filter = status === "online" || status === "attention" || status === "revoked" ? status : "all";
-    return reply.type("text/html; charset=utf-8").send(renderDevices(shell(request, auth, "devices"), { devices: ownedDevices(auth.principal.ownerId), filter, now: Date.now() }));
+    const deleted = (request.query as Record<string, unknown>).deleted === "1";
+    return reply.type("text/html; charset=utf-8").send(renderDevices(shell(request, auth, "devices"), { devices: ownedDevices(auth.principal.ownerId), filter, now: Date.now(), deleted }));
   });
   app.get("/dashboard/devices/:deviceId", async (request, reply) => {
     const auth = requireDashboardAuth(request, reply, deps.sessions);
@@ -141,6 +202,22 @@ export function registerDashboardRoutes(
     const ctx = shell(request, auth, "devices");
     const path = "/dashboard/devices/" + encodeURIComponent(device.id);
     return reply.type("text/html; charset=utf-8").send(renderConfirm(ctx, { title: t(ctx.locale, "confirm.revokeDevice", { name: device.name }), bullets: (["confirm.credentials", "confirm.deviceAccess", "confirm.noFiles", "confirm.irreversible"] as const).map(key => t(ctx.locale, key)), action: path + "/revoke", submitLabel: t(ctx.locale, "device.revoke"), cancelHref: path, danger: true }));
+  });
+
+  app.get("/dashboard/devices/:deviceId/delete", async (request, reply) => {
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth) return;
+    const { deviceId } = request.params as { deviceId: string };
+    const device = ownedDevices(auth.principal.ownerId).find(d => d.id === deviceId);
+    if (!device) return dashboardError(request, reply, auth, 404, "notFound");
+    const ctx = shell(request, auth, "devices");
+    const path = "/dashboard/devices/" + encodeURIComponent(device.id);
+    return reply.type("text/html; charset=utf-8").send(renderConfirm(ctx, {
+      title: t(ctx.locale, "confirm.deleteDevice", { name: device.name, id: device.id.slice(-8) }),
+      bullets: (["confirm.deleteAccess", "confirm.deleteHidden", "confirm.noFiles", "confirm.irreversible"] as const).map(key => t(ctx.locale, key)),
+      action: path + "/delete", submitLabel: t(ctx.locale, "device.delete"),
+      cancelHref: path, danger: true,
+    }));
   });
 
   app.get("/dashboard/lang", async (request, reply) => {
@@ -237,7 +314,7 @@ export function registerDashboardRoutes(
     privateBrowserPage(reply);
     const { deviceId } = request.params as { deviceId: string };
     const device = deps.devices.findById(deviceId);
-    if (!device || device.ownerId !== auth.principal.ownerId) return reply.code(404).send({ error: "NOT_FOUND" });
+    if (!device || device.deletedAt !== null || device.ownerId !== auth.principal.ownerId) return reply.code(404).send({ error: "NOT_FOUND" });
     const state = device.revokedAt !== null ? "REVOKED" : deps.registry.get(device.id)?.state ?? "OFFLINE";
     return reply.send({ deviceId: device.id, state });
   });
@@ -337,6 +414,21 @@ export function registerDashboardRoutes(
     try {
       deps.devices.revokeOwnedDevice(deviceId, auth.principal.ownerId);
       return redirect(reply, "/dashboard/devices/" + encodeURIComponent(deviceId), 303);
+    } catch (error) {
+      if (error instanceof DeviceNotFoundError) return dashboardError(request, reply, auth, 404, "notFound");
+      throw error;
+    }
+  });
+
+  app.post("/dashboard/devices/:deviceId/delete", async (request, reply) => {
+    const auth = requireDashboardAuth(request, reply, deps.sessions);
+    if (!auth) return;
+    const { deviceId } = request.params as { deviceId: string };
+    if (!requireCsrf(request, reply, auth, csrf, shell(request, auth, "devices"),
+      "/dashboard/devices/" + encodeURIComponent(deviceId))) return;
+    try {
+      deps.deviceManagement.deleteOwnedDevice(deviceId, auth.principal.ownerId);
+      return redirect(reply, "/dashboard/devices?deleted=1", 303);
     } catch (error) {
       if (error instanceof DeviceNotFoundError) return dashboardError(request, reply, auth, 404, "notFound");
       throw error;
