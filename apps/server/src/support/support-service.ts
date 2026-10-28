@@ -162,11 +162,24 @@ export class SupportService {
     const deviceId = this.credentials.issuedDeviceId(refreshCredential);
     if (!deviceId) throw new SupportNotFoundError();
     const row = this.db.prepare(
-      "SELECT ended_at AS endedAt, ended_reason AS reason FROM support_sessions WHERE device_id = ?",
-    ).get(deviceId) as {endedAt:number|null;reason:"owner"|"customer"|null}|undefined;
+      `SELECT s.ended_at AS endedAt, s.ended_reason AS reason,
+              d.id AS linkedDeviceId, d.deleted_at AS deviceDeletedAt
+       FROM support_sessions s
+       LEFT JOIN devices d ON d.id = s.device_id
+       WHERE s.device_id = ?`,
+    ).get(deviceId) as {
+      endedAt: number | null;
+      reason: "owner" | "customer" | null;
+      linkedDeviceId: string | null;
+      deviceDeletedAt: number | null;
+    } | undefined;
     if (!row) throw new SupportNotFoundError();
-    if (row.endedAt === null) return {state:"active"};
-    if (row.reason !== "owner" && row.reason !== "customer") throw new SupportNotFoundError();
-    return {state:"ended",reason:row.reason};
+    if (row.endedAt !== null) {
+      if (row.reason !== "owner" && row.reason !== "customer") throw new SupportNotFoundError();
+      return {state:"ended", reason:row.reason};
+    }
+    // Direct device removal invalidates support access without recording an owner/customer end.
+    if (row.linkedDeviceId === null || row.deviceDeletedAt !== null) throw new SupportNotFoundError();
+    return {state:"active"};
   }
 }

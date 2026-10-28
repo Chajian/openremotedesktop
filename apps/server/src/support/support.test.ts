@@ -2,6 +2,7 @@ import {describe, expect, it} from "vitest";
 import {buildApp} from "../app.js";
 import {createDatabase} from "../db/database.js";
 import {DeviceRepository} from "../devices/device-repository.js";
+import {DeviceCredentials} from "../devices/device-credentials.js";
 import {DeviceAuthService} from "../devices/device-auth.js";
 import {OwnerRepository} from "../auth/owner-repository.js";
 import {SessionRepository} from "../auth/session-repository.js";
@@ -89,6 +90,84 @@ describe("temporary support sessions", () => {
     } finally {await f.dispose();}
   });
 
+  it("never reports an unended session as active after owner DELETE /api/devices", async () => {
+    const f = await fixture();
+    try {
+      const page = await f.app.inject({ url:"/dashboard/support", headers:{cookie:f.cookie} });
+      const created = await f.app.inject({ method:"POST",url:"/dashboard/support/create",
+        headers:{cookie:f.cookie},payload:{csrf:csrf(page.body),label:"Delete a temporary device"} });
+      expect(created.statusCode).toBe(200);
+      const invite = inviteFrom(created.body);
+      const joined = await f.app.inject({method:"POST",url:"/api/support/join",
+        payload:{invite,deviceName:"Support Windows",platform:"win32"}});
+      expect(joined.statusCode).toBe(201);
+      const {deviceId,refreshCredential} = joined.json();
+      const before = await f.app.inject({method:"POST",url:"/api/support/status",
+        payload:{refreshCredential}});
+      expect(before.statusCode).toBe(200);
+      expect(before.json()).toEqual({state:"active"});
+
+      const deleted = await f.app.inject({method:"DELETE",url:"/api/devices/"+deviceId,
+        headers:{cookie:f.cookie}});
+      expect(deleted.statusCode).toBe(204);
+      const after = await f.app.inject({method:"POST",url:"/api/support/status",
+        payload:{refreshCredential}});
+      expect(after.statusCode).toBe(404);
+      expect(after.json()).toEqual({error:"SUPPORT_NOT_FOUND"});
+      const refresh = await f.app.inject({method:"POST",url:"/api/device-auth/refresh",
+        payload:{refreshCredential}});
+      expect(refresh.statusCode).toBe(401);
+      const supportHistory = await f.app.inject({url:"/dashboard/support",headers:{cookie:f.cookie}});
+      expect(supportHistory.body).toContain("Ended");
+      expect(supportHistory.body).toContain("Ended or device removed");
+      expect(supportHistory.body).not.toContain('href="/dashboard/devices/'+deviceId+'"');
+
+      const devices = new DeviceRepository(f.db);
+      const registry = new ConnectionRegistry();
+      const service = new SupportService(f.db,devices,
+        new DeviceManagementService(devices,registry,new RequestBroker(registry)));
+      expect(service.listOwned(f.ownerId)[0]).toMatchObject({state:"ended",endedReason:"device_removed"});
+      expect(service.hasActiveSupport(f.ownerId)).toBe(false);
+    } finally { await f.dispose(); }
+  });
+
+  it("preserves active status semantics for a revoked but not deleted temporary device", async () => {
+    const f = await fixture();
+    try {
+      const page = await f.app.inject({url:"/dashboard/support",headers:{cookie:f.cookie}});
+      const created = await f.app.inject({method:"POST",url:"/dashboard/support/create",
+        headers:{cookie:f.cookie},payload:{csrf:csrf(page.body),label:"Revoke only"}});
+      const invite = inviteFrom(created.body);
+      const joined = await f.app.inject({method:"POST",url:"/api/support/join",
+        payload:{invite,deviceName:"Customer PC",platform:"win32"}});
+      expect(joined.statusCode).toBe(201);
+      const {deviceId,refreshCredential} = joined.json();
+      const revoked = await f.app.inject({method:"POST",url:`/api/devices/${deviceId}/revoke`,
+        headers:{cookie:f.cookie}});
+      expect(revoked.statusCode).toBe(200);
+      const status = await f.app.inject({method:"POST",url:"/api/support/status",
+        payload:{refreshCredential}});
+      expect(status.statusCode).toBe(200);
+      expect(status.json()).toEqual({state:"active"});
+      expect((await f.app.inject({method:"POST",url:"/api/device-auth/refresh",
+        payload:{refreshCredential}})).statusCode).toBe(401);
+    } finally {await f.dispose();}
+  });
+
+  it("does not recognize invalid, unknown, or ordinary device credentials as support", async () => {
+    const f = await fixture();
+    try {
+      const device = new DeviceRepository(f.db).create("Normal device",f.ownerId);
+      const regularCredential = new DeviceCredentials(f.db).issue(device.id);
+      for (const refreshCredential of ["invalid", "x".repeat(43), regularCredential]) {
+        const status = await f.app.inject({method:"POST",url:"/api/support/status",
+          payload:{refreshCredential}});
+        expect(status.statusCode).toBe(404);
+        expect(status.json()).toEqual({error:"SUPPORT_NOT_FOUND"});
+      }
+    } finally {await f.dispose();}
+  });
+
   it("lets the customer stop sharing and prevents other owners from ending sessions", async () => {
     const f = await fixture();
     try {
@@ -110,8 +189,10 @@ describe("temporary support sessions", () => {
       expect((await f.app.inject({method:"POST",url:"/api/support/stop",
         payload:{refreshCredential}})).statusCode).toBe(204);
       expect(new DeviceRepository(f.db).findById(deviceId)).toBeNull();
-      expect((await f.app.inject({method:"POST",url:"/api/support/status",
-        payload:{refreshCredential}})).json()).toEqual({state:"ended",reason:"customer"});
+      const status = await f.app.inject({method:"POST",url:"/api/support/status",
+        payload:{refreshCredential}});
+      expect(status.statusCode).toBe(200);
+      expect(status.json()).toEqual({state:"ended",reason:"customer"});
       expect((await f.app.inject({method:"POST",url:"/api/support/stop",
         payload:{refreshCredential}})).statusCode).toBe(404);
     } finally {await f.dispose();}

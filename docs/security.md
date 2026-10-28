@@ -140,7 +140,10 @@ sharing; the customer stop endpoint verifies that device's refresh credential.
 Both revoke all device credentials, detach the live Relay socket and prevent
 new requests. A credential-possessor may query only the session's terminal
 state and reason after revocation via POST /api/support/status; this grants
-no tool access. The Agent reports a normal exit only when an owner-ended
+no tool access. Explicit owner/customer end states remain queryable even after
+the device is deleted. Directly deleting a device without an explicit session
+end instead returns 404 SUPPORT_NOT_FOUND, never an active support status.
+The Agent reports a normal exit only when an owner-ended
 state is verified after credential rejection and runtime shutdown succeeds.
 Other authentication, transport and executor-cleanup failures remain errors.
 The refresh credential issuance and active-credential lookup are shared with
