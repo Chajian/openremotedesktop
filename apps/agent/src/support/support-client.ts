@@ -3,10 +3,11 @@ import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import type { CredentialStore } from "../credentials/credential-store.js";
 import { ServerClient, ServerRequestError, type SupportPreviewResponse } from "../http/server-client.js";
+import { DeviceCredentialRejectedError } from "../auth/device-token.js";
 import { runAgentConnect } from "../runtime.js";
 
 export class SupportConsentDeniedError extends Error {}
-type SupportApi = Pick<ServerClient, "supportPreview" | "joinSupport" | "stopSupport">;
+type SupportApi = Pick<ServerClient, "supportPreview" | "joinSupport" | "stopSupport" | "supportStatus">;
 type RunAgent = typeof runAgentConnect;
 export type SupportConnectOptions = {
   client?: SupportApi;
@@ -67,6 +68,21 @@ export async function runSupportConnect(
   // Only the customer (Ctrl+C) or the support owner may end the session.
   // A transient or fatal Agent failure leaves the session offline for manual review.
   if (!signal.aborted) {
+    if (runtimeError instanceof DeviceCredentialRejectedError) {
+      // Relay and executor cleanup have already completed in runAgentConnect.
+      // A revoked credential alone is NOT evidence that the creator ended support.
+      let ownerEnded = false;
+      try {
+        const status = await client.supportStatus(joined.refreshCredential);
+        ownerEnded = status.state === "ended" && status.reason === "owner";
+      } catch {
+        // Keep the original authentication error if status cannot be verified.
+      }
+      if (ownerEnded) {
+        console.log("Temporary support ended by the session creator.");
+        return;
+      }
+    }
     if (runtimeError) throw runtimeError;
     return;
   }

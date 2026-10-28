@@ -2,6 +2,7 @@ import {describe, expect, it, vi} from "vitest";
 import type {ServerClient} from "../http/server-client.js";
 import type {AgentConnectOptions} from "../runtime.js";
 import {runSupportConnect} from "./support-client.js";
+import {DeviceCredentialRejectedError} from "../auth/device-token.js";
 
 function fixture() {
   const client = {
@@ -9,6 +10,8 @@ function fixture() {
     joinSupport:vi.fn(async()=>({deviceId:"11111111-1111-4111-8111-111111111111",
       refreshCredential:"r".repeat(43),sessionId:"s1"})),
     stopSupport:vi.fn(async()=>undefined),
+    supportStatus:vi.fn(async ():Promise<{state:"active"}|{state:"ended";reason:"owner"|"customer"}> =>
+      ({state:"ended",reason:"owner"})),
   };
   return client;
 }
@@ -60,5 +63,44 @@ describe("customer support agent",()=>{
     await expect(runSupportConnect(new URL("https://remote.example.com"),"i".repeat(32),
       controller.signal,{client,consent:async()=>true})).rejects.toBeDefined();
     expect(client.supportPreview).not.toHaveBeenCalled();
+  });
+});
+
+describe("support credential rejection classification", () => {
+  it("treats only a verified owner-ended session as normal", async () => {
+    const client = fixture();
+    const failure = new DeviceCredentialRejectedError();
+    await expect(runSupportConnect(new URL("https://remote.example.com"),
+      "x".repeat(32), new AbortController().signal, {
+        client, consent: async () => true, runAgent: async () => { throw failure; },
+      })).resolves.toBeUndefined();
+    expect(client.supportStatus).toHaveBeenCalledWith("r".repeat(43));
+    expect(client.stopSupport).not.toHaveBeenCalled();
+  });
+
+  it("keeps genuine auth rejection, unavailable status and cleanup failures as errors", async () => {
+    const client = fixture();
+    const failure = new DeviceCredentialRejectedError();
+    client.supportStatus.mockResolvedValueOnce({state:"active"});
+    await expect(runSupportConnect(new URL("https://remote.example.com"),
+      "x".repeat(32), new AbortController().signal, {
+        client, consent: async () => true, runAgent: async () => { throw failure; },
+      })).rejects.toBe(failure);
+    client.supportStatus.mockResolvedValueOnce({state:"ended",reason:"customer"});
+    await expect(runSupportConnect(new URL("https://remote.example.com"),
+      "x".repeat(32), new AbortController().signal, {
+        client, consent: async () => true, runAgent: async () => { throw failure; },
+      })).rejects.toBe(failure);
+    client.supportStatus.mockRejectedValueOnce(new Error("status unavailable"));
+    await expect(runSupportConnect(new URL("https://remote.example.com"),
+      "x".repeat(32), new AbortController().signal, {
+        client, consent: async () => true, runAgent: async () => { throw failure; },
+      })).rejects.toBe(failure);
+    const cleanupFailure = new AggregateError([failure, new Error("shutdown failed")]);
+    await expect(runSupportConnect(new URL("https://remote.example.com"),
+      "x".repeat(32), new AbortController().signal, {
+        client, consent: async () => true,
+        runAgent: async () => { throw cleanupFailure; },
+      })).rejects.toBe(cleanupFailure);
   });
 });

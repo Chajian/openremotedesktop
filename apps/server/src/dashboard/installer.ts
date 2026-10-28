@@ -27,5 +27,5 @@ export function installerInstructions(
   const command = os === "win"
     ? "& { $u='" + url + "'; $f=Join-Path $env:TEMP ('odr-'+[guid]::NewGuid().ToString('N')+'.ps1'); try { Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $f; if ((Get-FileHash -Algorithm SHA256 $f).Hash.ToLowerInvariant() -ne '" + sha256 + "') { throw 'Installer checksum mismatch' }; & ([scriptblock]::Create([IO.File]::ReadAllText($f))) -Server '" + origin + "'" + supportArgs + " } finally { Remove-Item $f -Force -ErrorAction SilentlyContinue } }"
     : "( f=$(mktemp) && curl -fsSL '" + url + "' -o \"$f\" && printf '%s  %s\\n' '" + sha256 + "' \"$f\" | shasum -a 256 -c - && bash \"$f\" --server '" + origin + "'; result=$?; rm -f \"$f\"; ( exit \"$result\" ) )";
-  return { url, sha256, command, version: AGENT_INSTALL_VERSION };
+  return { url, sha256, command, version: support?.version ?? AGENT_INSTALL_VERSION };
 }

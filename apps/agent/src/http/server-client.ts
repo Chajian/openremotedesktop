@@ -4,6 +4,9 @@ export type SupportPreviewResponse = {
 export type SupportJoinResponse = {
   deviceId: string; refreshCredential: string; sessionId: string;
 };
+export type SupportStatusResponse =
+  | {state:"active"}
+  | {state:"ended";reason:"owner"|"customer"};
 
 export type PairingCreateResponse = {
   deviceCode: string;
@@ -84,6 +87,22 @@ export class ServerClient {
         !("sessionId" in result) || typeof result.sessionId !== "string" ||
         !result.sessionId) throw new ServerResponseError();
     return result as SupportJoinResponse;
+  }
+
+  /** Status uses the original refresh secret solely as evidence, not authority. */
+  async supportStatus(refreshCredential: string,
+    signal: AbortSignal = AbortSignal.timeout(5_000)): Promise<SupportStatusResponse> {
+    const status = await this.request<unknown>("/api/support/status", {
+      method: "POST", headers: {"content-type":"application/json"},
+      body: JSON.stringify({refreshCredential}),
+    }, signal);
+    if (!status || typeof status !== "object" || !("state" in status))
+      throw new ServerResponseError();
+    if (status.state === "active") return {state:"active"};
+    if (status.state === "ended" && "reason" in status &&
+        (status.reason === "owner" || status.reason === "customer"))
+      return {state:"ended",reason:status.reason};
+    throw new ServerResponseError();
   }
 
   async stopSupport(refreshCredential: string, signal: AbortSignal = AbortSignal.timeout(5_000)): Promise<void> {

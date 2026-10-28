@@ -1,6 +1,7 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type BetterSqlite3 from "better-sqlite3";
 import { type Device, DeviceRepository } from "./device-repository.js";
+import { DeviceCredentials } from "./device-credentials.js";
 
 const PAIRING_TTL_MS = 10 * 60 * 1000;
 const POLL_INTERVAL_SECONDS = 5;
@@ -63,14 +64,16 @@ function randomUserCode(): string {
 
 export class PairingService {
   private readonly now: () => number;
+  private readonly credentials: DeviceCredentials;
 
   constructor(
     private readonly db: BetterSqlite3.Database,
     private readonly devices: DeviceRepository,
     private readonly publicBaseUrl: URL,
-    options: { now?: () => number } = {},
+    options: { now?: () => number; credentials?: DeviceCredentials } = {},
   ) {
     this.now = options.now ?? Date.now;
+    this.credentials = options.credentials ?? new DeviceCredentials(db);
   }
 
   createPairing(): {
@@ -173,26 +176,11 @@ export class PairingService {
       return { status: "pending", interval: POLL_INTERVAL_SECONDS };
     }
 
-    const existing = this.db
-      .prepare("SELECT 1 FROM device_credentials WHERE device_id = ?")
-      .get(row.device_id);
-    if (existing) {
+    if (this.credentials.hasIssued(row.device_id)) {
       return { status: "credential_already_issued", deviceId: row.device_id };
     }
 
-    const refreshCredential = randomBytes(32).toString("base64url");
-    this.db
-      .prepare(
-        `INSERT INTO device_credentials
-          (id, device_id, refresh_hash, created_at, revoked_at)
-         VALUES (?, ?, ?, ?, NULL)`,
-      )
-      .run(
-        randomUUID(),
-        row.device_id,
-        hashSecret(refreshCredential),
-        this.now(),
-      );
+    const refreshCredential = this.credentials.issue(row.device_id, this.now());
 
     return {
       status: "approved",

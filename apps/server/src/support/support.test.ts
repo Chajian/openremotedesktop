@@ -74,6 +74,10 @@ describe("temporary support sessions", () => {
       const ended = await f.app.inject({method:"POST",url:`/dashboard/support/${sessionId}/end`,
         headers:{cookie:f.cookie},payload:{csrf:csrf(supportPage.body)}});
       expect(ended.statusCode).toBe(303);
+      const status = await f.app.inject({method:"POST",url:"/api/support/status",payload:{refreshCredential}});
+      expect(status.statusCode).toBe(200);
+      expect(status.json()).toEqual({state:"ended",reason:"owner"});
+      expect((await f.app.inject({method:"POST",url:"/api/support/status",payload:{refreshCredential:"bad"}})).statusCode).toBe(404);
       expect((await f.app.inject({method:"POST",url:"/api/device-auth/refresh",
         payload:{refreshCredential}})).statusCode).toBe(401);
       expect((await f.app.inject({url:"/api/devices",headers:{cookie:f.cookie}})).json()).toEqual([]);
@@ -106,6 +110,8 @@ describe("temporary support sessions", () => {
       expect((await f.app.inject({method:"POST",url:"/api/support/stop",
         payload:{refreshCredential}})).statusCode).toBe(204);
       expect(new DeviceRepository(f.db).findById(deviceId)).toBeNull();
+      expect((await f.app.inject({method:"POST",url:"/api/support/status",
+        payload:{refreshCredential}})).json()).toEqual({state:"ended",reason:"customer"});
       expect((await f.app.inject({method:"POST",url:"/api/support/stop",
         payload:{refreshCredential}})).statusCode).toBe(404);
     } finally {await f.dispose();}
@@ -128,5 +134,57 @@ describe("temporary support sessions", () => {
       expect(service.endOwned(service.listOwned("owner")[0]!.id,"owner")).toBe(true);
       expect(service.listOwned("owner")[0]?.state).toBe("ended");
     } finally {db.close();}
+  });
+});
+
+describe("focused active-support and transactional boundaries", () => {
+  it("queries only live, owned support and permits ending with issuance disabled", async () => {
+    const f = await fixture(false);
+    try {
+      const devices = new DeviceRepository(f.db);
+      const registry = new ConnectionRegistry();
+      const service = new SupportService(f.db, devices,
+        new DeviceManagementService(devices, registry, new RequestBroker(registry)));
+      const bob = new OwnerRepository(f.db).findOrCreateGitHubUser("96582", "other");
+      const own = service.create(f.ownerId, "Ongoing");
+      const foreign = service.create(bob.id, "Foreign");
+      const a = service.join(own.invite, "Windows A", "win32");
+      const b = service.join(foreign.invite, "Windows B", "win32");
+      expect(service.hasActiveSupport(f.ownerId)).toBe(true);
+      expect(service.activeDeviceIds(f.ownerId)).toEqual([a.deviceId]);
+      expect(service.activeDeviceIds(bob.id)).toEqual([b.deviceId]);
+      const dashboard = await f.app.inject({url:"/dashboard/support",headers:{cookie:f.cookie}});
+      expect(dashboard.body).toContain("Ongoing");
+      expect(dashboard.body).not.toContain("Foreign");
+      expect(dashboard.body).toContain("End support");
+      service.endOwned(own.session.id, f.ownerId);
+      expect(service.hasActiveSupport(f.ownerId)).toBe(false);
+      expect(service.activeDeviceIds(f.ownerId)).toEqual([]);
+      expect(service.hasActiveSupport(bob.id)).toBe(true);
+      devices.deleteOwnedDevice(b.deviceId, bob.id);
+      expect(service.hasActiveSupport(bob.id)).toBe(false);
+      expect(service.activeDeviceIds(bob.id)).toEqual([]);
+    } finally { await f.dispose(); }
+  });
+  it("rolls back device and credential if invitation binding fails", () => {
+    const db = createDatabase(":memory:");
+    try {
+      db.prepare("INSERT INTO owner (id,password_hash,created_at) VALUES ('owner','x',0)").run();
+      const devices = new DeviceRepository(db);
+      const registry = new ConnectionRegistry();
+      const service = new SupportService(db, devices,
+        new DeviceManagementService(devices, registry, new RequestBroker(registry)));
+      const { invite, session } = service.create("owner","Rollback fixture");
+      db.exec(`CREATE TRIGGER reject_support_join BEFORE UPDATE OF device_id ON support_sessions
+        BEGIN SELECT RAISE(ABORT, 'fixture binding failed'); END`);
+      expect(() => service.join(invite,"Windows", "win32")).toThrow();
+      expect(devices.listDevices()).toHaveLength(0);
+      expect(db.prepare("SELECT COUNT(*) AS n FROM device_credentials").get()).toEqual({n:0});
+      expect(db.prepare("SELECT device_id AS deviceId, joined_at AS joinedAt FROM support_sessions WHERE id=?")
+        .get(session.id)).toEqual({deviceId:null,joinedAt:null});
+      db.exec("DROP TRIGGER reject_support_join");
+      expect(service.join(invite,"Windows", "win32").deviceId).toBeTruthy();
+      expect(devices.listDevices()).toHaveLength(1);
+    } finally { db.close(); }
   });
 });

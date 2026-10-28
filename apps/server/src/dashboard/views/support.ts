@@ -24,7 +24,10 @@ export function renderSupportDashboard(
         <h3>${s.label}</h3><span class="chip">${t(ctx.locale, `support.state.${s.state}`)}</span>
       </div>
       <p class="muted">${t(ctx.locale, "support.createdAt")}: ${formatDateTime(ctx.locale,s.createdAt)}</p>
-      ${s.deviceId ? html`<a href="/dashboard/devices/${encodeURIComponent(s.deviceId)}">${t(ctx.locale,"support.device")}: ${s.deviceId.slice(0,8)} (${devices.get(s.deviceId) ?? "OFFLINE"})</a>` : null}
+      ${s.deviceId ? (s.state === "active" && s.deviceAccessible
+        ? html`<a href="/dashboard/devices/${encodeURIComponent(s.deviceId)}">${t(ctx.locale,"support.device")}: ${s.deviceId.slice(0,8)} (${devices.get(s.deviceId) ?? "OFFLINE"})</a>`
+        : html`<span class="muted">${t(ctx.locale,"support.device")}: ${s.deviceId.slice(0,8)} (${t(ctx.locale,"support.deviceRemoved")})</span>`)
+        : null}
       ${s.state !== "ended" ? html`<a class="btn btn-danger btn-sm" style="margin-top:14px"
         href="/dashboard/support/${encodeURIComponent(s.id)}/end">${t(ctx.locale,"support.end")}</a>` : null}
     </article>`);

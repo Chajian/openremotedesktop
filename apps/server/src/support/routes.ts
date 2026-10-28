@@ -55,6 +55,18 @@ export function registerSupportRoutes(app: FastifyInstance, support: SupportServ
       return errorReply(reply, error);
     }
   });
+  // This read verifies possession of the originally issued refresh secret;
+  // it grants no device authority and remains available after revocation.
+  app.post("/api/support/status", async (request, reply) => {
+    reply.header("Cache-Control", "no-store");
+    const body = request.body as Record<string, unknown> | null;
+    if (!body || typeof body.refreshCredential !== "string") {
+      return reply.code(400).send({error:"INVALID_SUPPORT_REQUEST"});
+    }
+    try { return reply.send(support.statusByCredential(body.refreshCredential)); }
+    catch (error) { return errorReply(reply, error); }
+  });
+
   app.post("/api/support/stop", async (request, reply) => {
     reply.header("Cache-Control", "no-store");
     const body = request.body as Record<string, unknown> | null;

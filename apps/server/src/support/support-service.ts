@@ -1,9 +1,15 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type BetterSqlite3 from "better-sqlite3";
 import type { DeviceRepository } from "../devices/device-repository.js";
+import { DeviceCredentials } from "../devices/device-credentials.js";
 import type { DeviceManagementService } from "../devices/device-management-service.js";
 
 const INVITE_TTL_MS = 5 * 60_000;
+// Shared joined-and-not-ended predicate for both public navigation queries.
+const ACTIVE_JOINED_SUPPORT = `FROM support_sessions s
+  JOIN devices d ON d.id = s.device_id
+  WHERE s.owner_id = ? AND s.ended_at IS NULL
+    AND s.device_id IS NOT NULL AND d.deleted_at IS NULL`;
 const hash = (secret: string) => createHash("sha256").update(secret).digest("hex");
 const validInvite = (value: string) => /^[A-Za-z0-9_-]{32}$/.test(value);
 export class SupportNotFoundError extends Error {}
@@ -13,12 +19,14 @@ export class SupportAlreadyJoinedError extends Error {}
 type SessionRow = {
   id: string; owner_id: string; label: string; created_at: number;
   invite_expires_at: number; joined_at: number | null; device_id: string | null;
-  ended_at: number | null; ended_reason: string | null; deleted_at?: number | null;
+  ended_at: number | null; ended_reason: string | null;
+  deleted_at?: number | null; linked_device_id?: string | null;
 };
 export type SupportSession = {
   id: string; label: string; createdAt: number; inviteExpiresAt: number;
   joinedAt: number | null; deviceId: string | null; endedAt: number | null;
   endedReason: string | null; state: "inviting" | "expired" | "active" | "ended";
+  deviceAccessible: boolean;
 };
 
 export class SupportService {
@@ -27,6 +35,7 @@ export class SupportService {
     private readonly devices: DeviceRepository,
     private readonly management: DeviceManagementService,
     private readonly now: () => number = Date.now,
+    private readonly credentials: DeviceCredentials = new DeviceCredentials(db),
   ) {}
 
   private mapped(row: SessionRow): SupportSession {
@@ -37,6 +46,8 @@ export class SupportService {
       id: row.id, label: row.label, createdAt: row.created_at,
       inviteExpiresAt: row.invite_expires_at, joinedAt: row.joined_at,
       deviceId: row.device_id, endedAt: row.ended_at,
+      deviceAccessible: row.device_id !== null && row.linked_device_id != null &&
+        row.deleted_at == null && row.ended_at === null,
       endedReason: row.ended_reason ?? (row.deleted_at != null ? "device_removed" : null),
       state,
     };
@@ -85,11 +96,8 @@ export class SupportService {
       const row = this.byInvite(invite);
       const name = deviceName.trim().slice(0, 80) || "Customer Windows";
       const device = this.devices.create(name, row.owner_id);
-      const refreshCredential = randomBytes(32).toString("base64url");
       const at = this.now();
-      this.db.prepare(`INSERT INTO device_credentials
-        (id, device_id, refresh_hash, created_at, revoked_at)
-        VALUES (?, ?, ?, ?, NULL)`).run(randomUUID(), device.id, hash(refreshCredential), at);
+      const refreshCredential = this.credentials.issue(device.id, at);
       const result = this.db.prepare(`UPDATE support_sessions
         SET device_id = ?, joined_at = ? WHERE id = ?
         AND device_id IS NULL AND ended_at IS NULL AND invite_expires_at > ?`
@@ -101,12 +109,26 @@ export class SupportService {
 
   listOwned(ownerId: string): SupportSession[] {
     const rows = this.db.prepare(
-      `SELECT s.*, d.deleted_at FROM support_sessions s
+      `SELECT s.*, d.deleted_at, d.id AS linked_device_id FROM support_sessions s
        LEFT JOIN devices d ON d.id = s.device_id
        WHERE s.owner_id = ? ORDER BY s.created_at DESC, s.id DESC`,
     ).all(ownerId) as SessionRow[];
     return rows.map(row => this.mapped(row));
   }
+  /** Existence and ID-only queries do not hydrate the owner's history. */
+  hasActiveSupport(ownerId: string): boolean {
+    return Boolean(this.db.prepare(
+      `SELECT 1 ${ACTIVE_JOINED_SUPPORT} LIMIT 1`,
+    ).get(ownerId));
+  }
+
+  activeDeviceIds(ownerId: string): string[] {
+    const rows = this.db.prepare(
+      `SELECT s.device_id AS deviceId ${ACTIVE_JOINED_SUPPORT}`,
+    ).all(ownerId) as Array<{deviceId:string}>;
+    return rows.map(row => row.deviceId);
+  }
+
   private end(row: SessionRow, reason: "owner" | "customer"): boolean {
     if (row.ended_at !== null) return false;
     // Revocation and disconnect must complete before declaring the session ended.
@@ -126,15 +148,25 @@ export class SupportService {
   }
 
   stopByCredential(refreshCredential: string): boolean {
-    if (!/^[A-Za-z0-9_-]{43}$/.test(refreshCredential)) throw new SupportNotFoundError();
+    const deviceId = this.credentials.activeDeviceId(refreshCredential);
+    if (!deviceId) throw new SupportNotFoundError();
     const row = this.db.prepare(
-      `SELECT s.* FROM support_sessions s
-       JOIN device_credentials c ON c.device_id = s.device_id
-       JOIN devices d ON d.id = c.device_id
-       WHERE c.refresh_hash = ? AND c.revoked_at IS NULL
-       AND d.revoked_at IS NULL AND d.deleted_at IS NULL`,
-    ).get(hash(refreshCredential)) as SessionRow | undefined;
-    if (!row || row.ended_at !== null) throw new SupportNotFoundError();
+      "SELECT * FROM support_sessions WHERE device_id = ? AND ended_at IS NULL",
+    ).get(deviceId) as SessionRow | undefined;
+    if (!row) throw new SupportNotFoundError();
     return this.end(row, "customer");
+  }
+
+  /** Credential possession proves this session's outcome, never tool authority. */
+  statusByCredential(refreshCredential: string): {state: "active" | "ended"; reason?: "owner" | "customer"} {
+    const deviceId = this.credentials.issuedDeviceId(refreshCredential);
+    if (!deviceId) throw new SupportNotFoundError();
+    const row = this.db.prepare(
+      "SELECT ended_at AS endedAt, ended_reason AS reason FROM support_sessions WHERE device_id = ?",
+    ).get(deviceId) as {endedAt:number|null;reason:"owner"|"customer"|null}|undefined;
+    if (!row) throw new SupportNotFoundError();
+    if (row.endedAt === null) return {state:"active"};
+    if (row.reason !== "owner" && row.reason !== "customer") throw new SupportNotFoundError();
+    return {state:"ended",reason:row.reason};
   }
 }

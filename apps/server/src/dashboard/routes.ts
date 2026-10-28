@@ -108,15 +108,14 @@ export function registerDashboardRoutes(
 
   function ownedDevices(ownerId: string): LiveDevice[] {
     const live = new Map(deps.registry.snapshot().map(s => [s.deviceId, s.state]));
-    const temporary = deps.config.supportEnabled ? new Set(deps.support.listOwned(ownerId)
-      .filter(s => s.state === "active" && s.deviceId !== null).map(s => s.deviceId)) : new Set<string>();
+    const temporary = new Set(deps.support.activeDeviceIds(ownerId));
     return deps.devices.listOwnedDevices(ownerId).map(d => ({ ...d,
       state: d.revokedAt !== null ? "REVOKED" : (live.get(d.id) ?? "OFFLINE"),
       isSupport: temporary.has(d.id),
     }));
   }
   function shell(request: FastifyRequest, auth: AuthenticatedDashboard, nav: NavKey | null): ShellContext {
-    return { locale: localeFromRequest(request), account: deps.owners.getAccountSummary(auth.principal.ownerId), nav, path: request.url, csrf: csrf.tokenFor(auth.sessionToken), publicBaseUrl: publicBaseUrlForHost(deps.config, request.headers.host), supportEnabled: deps.config.supportEnabled === true || deps.support.listOwned(auth.principal.ownerId).some(s => s.state === "active") };
+    return { locale: localeFromRequest(request), account: deps.owners.getAccountSummary(auth.principal.ownerId), nav, path: request.url, csrf: csrf.tokenFor(auth.sessionToken), publicBaseUrl: publicBaseUrlForHost(deps.config, request.headers.host), supportEnabled: deps.config.supportEnabled === true || deps.support.hasActiveSupport(auth.principal.ownerId) };
   }
   function dashboardError(request: FastifyRequest, reply: FastifyReply, auth: AuthenticatedDashboard, status: number, kind: "invalid" | "notFound" | "forbidden", backHref = "/dashboard/devices") {
     const ctx = shell(request, auth, backHref.startsWith("/dashboard/mcp") ? "chatgpt" : backHref.startsWith("/dashboard/settings") ? "settings" : "devices");

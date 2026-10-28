@@ -138,7 +138,14 @@ A joined session is not timed out automatically. The creator ends it in
 Dashboard or the customer can press Ctrl+C in the Agent's terminal to stop
 sharing; the customer stop endpoint verifies that device's refresh credential.
 Both revoke all device credentials, detach the live Relay socket and prevent
-new requests. If the Agent crashes or loses network connectivity, the session
+new requests. A credential-possessor may query only the session's terminal
+state and reason after revocation via POST /api/support/status; this grants
+no tool access. The Agent reports a normal exit only when an owner-ended
+state is verified after credential rejection and runtime shutdown succeeds.
+Other authentication, transport and executor-cleanup failures remain errors.
+The refresh credential issuance and active-credential lookup are shared with
+normal device pairing in a small device-credential component.
+If the Agent crashes or loses network connectivity, the session
 is left offline for the creator to end, not silently deleted. The temporary
 credential lives only in process memory, never in the durable OS keyring or
 credential file. Direct device deletion also makes its support session appear
