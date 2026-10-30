@@ -38,6 +38,8 @@ jobs:
           pnpm --filter @open-desktop-remote/tool-contracts test:run
           pnpm --filter @open-desktop-remote/desktop-commander-adapter test:run
           pnpm --filter @open-desktop-remote/agent test:run
+      - name: Installer private runtime PATH regression
+        run: node --test scripts/installer-runtime-path.test.mjs
       - name: Validate macOS installer syntax
         if: runner.os != 'Windows'
         run: bash -n scripts/install-macos.sh

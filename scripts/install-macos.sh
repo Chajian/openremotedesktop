@@ -48,6 +48,8 @@ if [[ ! "$version" =~ ^v24\. ]]; then
 fi
 npm="$runtime/lib/node_modules/npm/bin/npm-cli.js"
 [[ -f "$npm" ]] || { echo 'npm missing from Node.js distribution.' >&2; exit 1; }
+# npm lifecycle scripts and Agent children must find the private Node runtime.
+export PATH="$runtime/bin:$PATH"
 cli="$INSTALL_DIR/node_modules/open-desktop-remote-agent/dist/cli.mjs"
 manifest="$INSTALL_DIR/node_modules/open-desktop-remote-agent/package.json"
 expected=''
