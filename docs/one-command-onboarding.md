@@ -29,6 +29,9 @@
 3. A private Node.js 24 runtime is installed in the current user's directory,
    with no administrator prompt, global PATH modification, Git or Homebrew.
    npm uses **https://registry.npmjs.org/** and installs an exact Agent version.
+   The private runtime is added to PATH for npm lifecycle scripts and Agent
+   child processes. Windows restores the caller's PATH when the installer
+   returns or fails; macOS changes PATH only inside the installer process.
 4. The Agent attempts to open `/device?code=XXXX-XXXX`. This carries only
    a ten-minute one-time code, never a refresh token or device code.
    Browser launch is best-effort; terminal always prints the fallback link.
