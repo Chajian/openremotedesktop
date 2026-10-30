@@ -1,9 +1,10 @@
-# One-command device installation and pairing (0.1.1)
+# One-command device installation and pairing
 
 ## Rollout gates
 
-- **Default OFF:** set `ODR_AGENT_INSTALL_ENABLED=true` only after npm
-  `open-desktop-remote-agent@0.1.1` is approved and publicly available.
+- **Default OFF:** set `ODR_AGENT_INSTALL_ENABLED=true` only after
+  the exact Agent version pinned in both installers is approved and publicly available on npm,
+  script URLs/checksums are verified, and fresh Windows/macOS pairing reaches READY.
 - No production deployment, npm staging/tagging, or existing Agent process change
   is performed by opening this PR.
 - `ODR_PUBLIC_BASE_URL` remains the **currently deployed, correct HTTPS origin**.
@@ -69,7 +70,8 @@
   npm tarball integrity is verified by npm; no publisher 2FA is bypassed.
 - A foreground Agent needs its terminal left open. This PR intentionally
   does **not** install background services, autostart or an uninstaller.
-- The website rollout is blocked until 0.1.1 is actually published.
+- The website rollout is blocked until the pinned Agent version is publicly available
+  and the real-device acceptance gates above pass.
 - Fresh-system READY cannot be claimed until a real user approves a
   device on a deployed test server; isolated `--install-only` tests do not
   perform device pairing or modify the production Agent.
