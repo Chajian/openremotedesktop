@@ -1,9 +1,9 @@
 import { escapeHtml } from "./templates.js";
-import { installerInstructions, type InstallerOS } from "./installer.js";
+import { installerInstructions, downloadSourceFromQuery, type DownloadSource, type InstallerOS } from "./installer.js";
 
 export type AgentOs = InstallerOS | "linux";
 export type WizardStep = 1 | 2 | 3;
-export type WizardOptions = { os: AgentOs; step: WizardStep; baseUrl: URL; enabled: boolean; csrf: string; code?: string };
+export type WizardOptions = { os: AgentOs; step: WizardStep; baseUrl: URL; enabled: boolean; csrf: string; code?: string; downloadSource?: DownloadSource };
 const colors = "--accent:#3355ff;--accent-bg:#eef1ff;--line:#e5e7ec;--gray:#667085;--text:#0e1116";
 const css = [
 ":root{"+colors+"}*{box-sizing:border-box}body{margin:0;background:#fff;color:var(--text);font:15px/1.6 'Segoe UI',-apple-system,'PingFang SC','Microsoft YaHei',system-ui,sans-serif}a{color:inherit;text-decoration:none}button,input{font:inherit}",
@@ -19,12 +19,16 @@ const css = [
 ".small{font-size:13px;color:#848a98}.link{color:var(--accent);font-weight:600}.field{margin:20px 0}.field label{display:block;font-size:14px;font-weight:600;margin-bottom:7px}.input{width:100%;padding:13px;border:1px solid #d7dbe2;border-radius:10px}.warn{background:#fff8ed;border:1px solid #f2d7a2;padding:15px;border-radius:12px;color:#855308;margin-top:20px;font-size:14px}",
 ".mobile-step{display:none}@media(max-width:750px){.steps{display:none}.mobile-step{display:block;justify-self:center;font-size:13px}.wz-top{grid-template-columns:auto 1fr auto;padding:0 15px}.main{padding:30px 17px}.footer{padding:12px 15px}h1{font-size:25px}.oss{gap:9px}.os{padding:17px 6px}.os-icon{width:45px;height:45px}}@media(max-width:430px){.brand .text{display:none}.os small{font-size:11px}.btn{padding:9px 12px}}",
 ].join("");
-function href(step: number, os: AgentOs) { return "/dashboard/connect?step=" + step + "&os=" + os; }
+function wizardHref(step: number, os: AgentOs, source: DownloadSource) {
+  return "/dashboard/connect?step=" + step + "&os=" + os + (source === "npmmirror" ? "&downloadSource=npmmirror" : "");
+}
 function windowShell(os: AgentOs) { return os === "win" ? "PowerShell" : "终端（Terminal）"; }
 
 
 export function renderConnectPage(input: WizardOptions): string {
   const { os, step, enabled, baseUrl, csrf } = input;
+  const downloadSource = downloadSourceFromQuery(input.downloadSource);
+  const href = (step: number, os: AgentOs) => wizardHref(step, os, downloadSource);
   const steps = ["选择系统", "运行命令", "输入配对码", "完成"];
   const top = '<header class="wz-top"><a class="brand" href="/dashboard"><span class="logo">▣</span><span class="text">添加设备</span></a>'
     + '<div class="steps">' + steps.map((label, i) =>
@@ -59,8 +63,13 @@ export function renderConnectPage(input: WizardOptions): string {
       body += '<div class="warn"><b>一键安装尚未启用</b><div>必须先通过审核并发布新版 Agent，确认可用后才会开放此入口。</div></div>';
       forward = '<a class="btn secondary" href="' + href(1, os) + '">返回选择系统</a>';
     } else {
-      const install = installerInstructions(os, baseUrl);
-      body += '<div class="substep"><span class="num">1</span><div><h3>打开 ' + windowShell(os) + '</h3><p>'
+      const install = installerInstructions(os, baseUrl, undefined, downloadSource);
+      body += '<div class="note"><b>下载渠道</b><p>'
+        + ([['official', '官方源（默认）'], ['npmmirror', '国内加速（npmmirror）']] as const).map(([source, label]) =>
+          '<a class="btn ' + (downloadSource === source ? 'primary' : 'secondary') + '" aria-current="'
+          + (downloadSource === source ? 'true' : 'false') + '" href="' + wizardHref(2, os, source) + '">' + label + '</a>').join(' ')
+        + '</p><span class="small">国内网络下载较慢时可选加速；仍需连接官方源获取校验信息，不修改全局下载设置。</span></div>'
+        + '<div class="substep"><span class="num">1</span><div><h3>打开 ' + windowShell(os) + '</h3><p>'
         + (os === "win" ? '从开始菜单搜索并打开 PowerShell。' : '打开 macOS 上的终端应用。') + '</p></div></div>'
         + '<div class="substep"><span class="num">2</span><div><h3>复制并运行这条命令</h3>'
         + '<p>自动安装环境、Agent，并启动设备配对。</p>'

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { renderCustomerSupport } from "../dashboard/views/support.js";
-import { installerInstructions } from "../dashboard/installer.js";
+import { installerInstructions, downloadSourceFromQuery } from "../dashboard/installer.js";
 import { localeFromRequest } from "../dashboard/ui/i18n.js";
 import { publicBaseUrlForHost, type ServerConfig } from "../config.js";
 import { SupportService, SupportNotFoundError,
@@ -23,12 +23,13 @@ export function registerSupportRoutes(app: FastifyInstance, support: SupportServ
     try {
       const preview = support.preview(invite);
       const baseUrl = publicBaseUrlForHost(config, request.headers.host);
+      const downloadSource = downloadSourceFromQuery((request.query as {downloadSource?: unknown}).downloadSource);
       const install = config.agentInstallEnabled && config.supportAgentVersion
-        ? installerInstructions("win", baseUrl, {invite, version:config.supportAgentVersion}).command
+        ? installerInstructions("win", baseUrl, {invite, version:config.supportAgentVersion}, downloadSource).command
         : undefined;
       return reply.type("text/html; charset=utf-8").send(renderCustomerSupport(
         localeFromRequest(request), baseUrl, invite,
-        preview.label, preview.inviteExpiresAt, install));
+        preview.label, preview.inviteExpiresAt, install, downloadSource));
     } catch (error) { return errorReply(reply, error); }
   });
 

@@ -47,6 +47,18 @@ describe("standalone Add Device wizard", () => {
     expect(linux).not.toContain("一键安装尚未启用");
   });
 
+  it("offers optional acceleration without changing the script origin or losing the selection", () => {
+    const official = page({ step: 2 });
+    expect(official).toContain("国内加速");
+    expect(official).not.toContain("-DownloadSource");
+    const accelerated = page({ step: 2, downloadSource: "npmmirror" });
+    expect(accelerated).toContain("-DownloadSource");
+    expect(accelerated).toContain("https://remote.example.com/install/windows.ps1");
+    expect(accelerated).toContain("step=3&os=win&downloadSource=npmmirror");
+    expect(page({ os: "mac", step: 2, downloadSource: "npmmirror" })).toContain("--download-source");
+    expect(page({ step: 2, enabled: false, downloadSource: "npmmirror" })).not.toContain("-DownloadSource");
+  });
+
   it("prefills only a valid one-time pairing code and escapes dynamic form fields", () => {
     const html = page({ step: 3, code: "K7QM-4WXP", csrf: "<untrusted>" });
     expect(html).toContain('value="K7QM-4WXP"');
