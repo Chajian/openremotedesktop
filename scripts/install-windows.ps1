@@ -1,11 +1,12 @@
 # Open Desktop Remote Agent installer (user-level; no system PATH changes).
 param(
   [Parameter(Mandatory = $true)][string]$Server,
-  [string]$PackageSource = 'open-desktop-remote-agent@0.1.5',
+  [string]$PackageSource = 'open-desktop-remote-agent@0.1.6',
   [ValidateSet('official', 'npmmirror')][string]$DownloadSource = 'official',
   [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'OpenDesktopRemote'),
   [switch]$InstallOnly,
-  [string]$SupportInvite = ''
+  [string]$SupportInvite = '',
+  [switch]$AcceptSupport
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -19,12 +20,16 @@ if ($DownloadSource -eq 'npmmirror' -and $PackageSource -notmatch '^open-desktop
   throw 'npmmirror requires an exact npm Agent version.'
 }
 if ($SupportInvite -and $SupportInvite -notmatch '^[A-Za-z0-9_-]{32}$') { throw 'Invalid support invite.' }
+if ($AcceptSupport -and -not $SupportInvite) { throw 'AcceptSupport requires a support invitation.' }
 if ($SupportInvite) {
   if ($PackageSource -notmatch '^open-desktop-remote-agent@([0-9]+[.][0-9]+[.][0-9]+)$') {
     throw 'Support requires an exact, verified npm Agent version.'
   }
   if ([Version]$Matches[1] -lt [Version]'0.1.4') {
     throw 'This Agent version does not support temporary sessions.'
+  }
+  if ($AcceptSupport -and [Version]$Matches[1] -lt [Version]'0.1.6') {
+    throw 'Downloaded support launchers require Agent 0.1.6 or newer.'
   }
 }
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
@@ -119,8 +124,10 @@ try {
   Write-Host "Agent installed in $InstallDir"
   if ($InstallOnly) { return }
   if ($SupportInvite) {
-    Write-Host 'Temporary support mode. The customer must explicitly approve full access.'
-    & $node $cli agent support --server $Server --invite $SupportInvite
+    Write-Host 'Temporary support mode. Keep this window open; press Ctrl+C to end sharing.'
+    $supportArguments = @('agent', 'support', '--server', $Server, '--invite', $SupportInvite)
+    if ($AcceptSupport) { $supportArguments += '--accept-support' }
+    & $node $cli @supportArguments
   } else {
     Write-Host "Approve your computer at $Server/device when the pairing code appears."
     Write-Host 'Keep this window open while you want the computer online.'

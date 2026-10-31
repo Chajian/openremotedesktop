@@ -41,6 +41,7 @@ import type { ConnectionRegistry } from "../relay/connection-registry.js";
 import type { OAuthClientRepository } from "../oauth/client-repository.js";
 import { sessionCookie } from "../routes/login.js";
 import { CsrfProtection } from "./csrf.js";
+import { supportDownloadUrl, supportsDownloadedLauncher } from "../support/support-launcher.js";
 import { installerSource, downloadSourceFromQuery } from "./installer.js";
 import { renderPairingPage } from "./onboarding.js";
 import { renderConnectPage, type AgentOs, type WizardStep } from "./wizard.js";
@@ -145,7 +146,9 @@ export function registerDashboardRoutes(
     const { session, invite } = deps.support.create(auth.principal.ownerId, label);
     interactivePage(reply);
     return reply.type("text/html; charset=utf-8").send(
-      renderSupportCreated(shell(request, auth, "support"), invite, session));
+      renderSupportCreated(shell(request, auth, "support"), invite, session,
+        deps.config.agentInstallEnabled && supportsDownloadedLauncher(deps.config.supportAgentVersion)
+          ? supportDownloadUrl(publicBaseUrlForHost(deps.config, request.headers.host), invite) : undefined));
   });
 
   app.get("/dashboard/support/:sessionId/end", async (request, reply) => {

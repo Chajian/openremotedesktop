@@ -10,6 +10,8 @@ export class SupportConsentDeniedError extends Error {}
 type SupportApi = Pick<ServerClient, "supportPreview" | "joinSupport" | "stopSupport" | "supportStatus">;
 type RunAgent = typeof runAgentConnect;
 export type SupportConnectOptions = {
+  /** Explicit opt-in from a customer-launched support file; ordinary CLI still prompts. */
+  acceptSupport?: boolean;
   client?: SupportApi;
   consent?: (preview: SupportPreviewResponse, signal: AbortSignal) => Promise<boolean>;
   runAgent?: RunAgent;
@@ -17,13 +19,17 @@ export type SupportConnectOptions = {
   platform?: string;
 };
 
-/** Customer approval is never implied by possessing or opening the invite URL. */
-async function consoleConsent(preview: SupportPreviewResponse, signal: AbortSignal): Promise<boolean> {
-  if (!stdin.isTTY || !stdout.isTTY) return false;
+function showSupportNotice(preview: SupportPreviewResponse): void {
   console.log("OpenRemote temporary support: " + preview.label);
   console.log("Approved AI clients for this support account can read and modify files,");
   console.log("run terminal commands and start programs as the current OS user.");
   console.log("Press Ctrl+C any time to stop sharing. Continue only if you trust the requester.");
+}
+
+/** Opening or downloading an invite alone never starts remote access. */
+async function consoleConsent(preview: SupportPreviewResponse, signal: AbortSignal): Promise<boolean> {
+  if (!stdin.isTTY || !stdout.isTTY) return false;
+  showSupportNotice(preview);
   const rl = createInterface({input: stdin, output: stdout});
   try {
     const response = await rl.question("Type YES to allow full remote support: ", {signal});
@@ -45,7 +51,8 @@ export async function runSupportConnect(
   const client = options.client ?? new ServerClient(serverUrl);
   const preview = await client.supportPreview(invite, signal);
   signal.throwIfAborted();
-  if (!await (options.consent ?? consoleConsent)(preview, signal)) {
+  if (options.acceptSupport === true) showSupportNotice(preview);
+  else if (!await (options.consent ?? consoleConsent)(preview, signal)) {
     throw new SupportConsentDeniedError("Customer declined temporary support");
   }
   signal.throwIfAborted();

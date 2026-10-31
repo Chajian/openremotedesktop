@@ -17,6 +17,29 @@ function fixture() {
 }
 
 describe("customer support agent",()=>{
+  it("explicit launcher acceptance shows permissions, skips typing, and still revokes", async () => {
+    const client = fixture();
+    const controller = new AbortController();
+    const consent = vi.fn(async () => false);
+    const output = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      await runSupportConnect(new URL("https://remote.example.com"), "x".repeat(32), controller.signal,
+        {client, acceptSupport: true, consent, runAgent: async () => { controller.abort(); }});
+      expect(consent).not.toHaveBeenCalled();
+      expect(client.joinSupport).toHaveBeenCalledOnce();
+      expect(client.stopSupport).toHaveBeenCalledOnce();
+      expect(output.mock.calls.flat().join("\n")).toContain("read and modify files");
+      expect(output.mock.calls.flat().join("\n")).toContain("Ctrl+C");
+    } finally { output.mockRestore(); }
+  });
+
+  it("does not use explicit launcher acceptance to bypass an invalid invitation", async () => {
+    const client = fixture();
+    client.supportPreview.mockRejectedValueOnce(new Error("expired"));
+    await expect(runSupportConnect(new URL("https://remote.example.com"), "x".repeat(32),
+      new AbortController().signal, {client, acceptSupport: true})).rejects.toThrow("expired");
+    expect(client.joinSupport).not.toHaveBeenCalled();
+  });
   it("confirms revocation only after the stop endpoint succeeds", async () => {
     const client = fixture();
     const controller = new AbortController();

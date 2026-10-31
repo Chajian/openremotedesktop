@@ -41,6 +41,33 @@
 6. The device detail page polls owner-scoped status every 2.5 seconds until READY.
    The first connection remains in the terminal foreground.
 
+## Downloaded Windows temporary support
+
+With support and installation enabled and `ODR_SUPPORT_AGENT_VERSION` pinned to
+a verified public version >= 0.1.6, creating a session at `/dashboard/support`
+returns a direct `OpenRemote-Support.cmd` download URL. The creator can copy the
+official-source link or the npmmirror acceleration link. The separate customer
+instructions page retains a manual command fallback.
+
+The customer downloads and double-clicks the file. The invitation, trusted Server
+origin and exact Agent version are embedded; no code or `YES` input is needed.
+Running this file starts full remote support, as explained on the page and in the
+foreground window. Only run files from a trusted requester. Windows/browser
+security prompts may still appear; the launcher does not bypass them.
+
+The file checks invitation availability, downloads the existing installer and
+checks its SHA-256 before execution. It uses `%LOCALAPPDATA%\OpenRemoteSupport`,
+separate from ordinary device installation, and reuses the installer's runtime,
+package verification and mirror fallback. Downloading alone grants no access and
+does not consume the invitation. The five-minute deadline includes installation;
+if it expires, request a new download link. Old files do not renew invitations.
+
+Keep the window open during support. Ctrl+C runs the existing stop/revoke flow;
+the launcher keeps success or error output visible afterward. No background
+service or autostart is installed. Normal manual CLI usage still requires `YES`.
+Before deployment, verify actual downloaded-file startup, READY, a read-only tool
+call, and confirmed revocation on another Windows device using the public package.
+
 ## Release and maintenance
 
 ### Optional China download acceleration

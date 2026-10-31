@@ -4,7 +4,7 @@ import { runSupportConnect, SupportConsentDeniedError } from "./support/support-
 import { ServerResponseError } from "./http/server-client.js";
 
 if (process.argv.length === 3 && ["--help", "-h"].includes(process.argv[2] ?? "")) {
-  console.log("Usage: agent connect --server URL | agent support --server URL --invite TOKEN");
+  console.log("Usage: agent connect --server URL | agent support --server URL --invite TOKEN [--accept-support]");
   process.exit(0);
 }
 
@@ -23,7 +23,8 @@ process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
 
 try {
-  if (command.command === "support") await runSupportConnect(command.serverUrl, command.invite, controller.signal);
+  if (command.command === "support") await runSupportConnect(command.serverUrl, command.invite, controller.signal,
+    {acceptSupport: command.acceptSupport === true});
   else await runAgentConnect(command.serverUrl, controller.signal);
 } catch (error) {
   // Runtime callers retain the original causes. CLI diagnostics must not let

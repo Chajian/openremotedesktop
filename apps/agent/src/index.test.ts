@@ -13,6 +13,13 @@ describe("agent public entry", () => {
 });
 
 describe("agent CLI", () => {
+  it("accepts explicit launcher consent only for a valid support command", () => {
+    const args = ["agent", "support", "--server", "https://remote.example.com", "--invite", "x".repeat(32)];
+    expect(parseAgentCommand([...args, "--accept-support"]))
+      .toMatchObject({command: "support", acceptSupport: true});
+    expect(() => parseAgentCommand([...args, "--accept-support", "extra"])).toThrow();
+    expect(() => parseAgentCommand(["agent", "connect", "--server", "https://remote.example.com", "--accept-support"])).toThrow();
+  });
   it("parses agent connect --server", () => {
     expect(
       parseAgentCommand([
