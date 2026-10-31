@@ -3,6 +3,40 @@ import { expect, it, vi } from "vitest";
 const connect = vi.hoisted(() => vi.fn());
 vi.mock("./runtime.js", () => ({ runAgentConnect: connect }));
 
+it.each(["SIGINT", "SIGTERM"] as const)("keeps handling %s until asynchronous shutdown finishes", async (signal) => {
+  const argv = process.argv;
+  const listeners = new Set(process.listeners(signal));
+  const started = Promise.withResolvers<AbortSignal>();
+  const cleanup = Promise.withResolvers<void>();
+  let main: Promise<unknown> | undefined;
+  try {
+    vi.resetModules();
+    process.argv = [process.execPath, "agent", "agent", "connect", "--server", "https://remote.example.com"];
+    connect.mockImplementationOnce(async (_url: URL, abort: AbortSignal) => {
+      started.resolve(abort);
+      await cleanup.promise;
+    });
+    main = import("./main.js");
+    const abort = await started.promise;
+    const stop = process.listeners(signal).find(listener => !listeners.has(listener))!;
+    expect(stop).toBeDefined();
+    const onAbort = vi.fn();
+    abort.addEventListener("abort", onAbort);
+    // EventEmitter emission checks listener lifetime without terminating Vitest.
+    process.emit(signal);
+    expect(abort.aborted).toBe(true);
+    expect(process.listeners(signal)).toContain(stop);
+    process.emit(signal);
+    expect(onAbort).toHaveBeenCalledTimes(1);
+    expect(process.listeners(signal)).toContain(stop);
+  } finally {
+    cleanup.resolve();
+    await main;
+    process.argv = argv;
+  }
+  expect(new Set(process.listeners(signal))).toEqual(listeners);
+});
+
 it.each(["aggregate", "single"])("reports %s shutdown failure without printing nested exception payloads", async (kind) => {
   const argv = process.argv;
   const exitCode = process.exitCode;
