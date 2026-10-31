@@ -16,9 +16,9 @@ POSIX 夹具发送真实 SIGTERM；Windows 夹具通过私有测试 IPC 进入 C
 
 Agent 发行版本的唯一来源是 `apps/agent/src/version.json`。Relay 握手中的 `agentVersion` 和生成的 npm 包版本读取同一份数据；`node scripts/set-agent-version.mjs X.Y.Z` 同时更新该数据、Windows/macOS 安装脚本及 Server 安装器版本。内部工作区包的 `0.0.0` 不作为发行版本。
 
-本次准备 Agent `0.1.5` 候选版本，修复临时协助清理期间重复停止信号打断撤销的问题，并提供明确的撤销结果提示；随版本发布的安装脚本支持可选的 npmmirror 下载加速，默认仍使用官方源。继续使用 Desktop Commander `0.3.1`，不覆盖已发布的 `0.1.4`。准备版本号不代表 npm 已公开发布或线上入口已开启；`ODR_AGENT_INSTALL_ENABLED` 和 `ODR_SUPPORT_ENABLED` 保持默认关闭。
+本次准备 Agent `0.1.6` 候选版本，支持带邀请的 Windows 下载启动文件：双击自动安装并连接，无需输入协助码或 YES，前台显示权限说明并保留 Ctrl+C 撤销。复用已有安装器、下载校验、可选 npmmirror 加速和停止清理流程。继续使用 Desktop Commander `0.3.1`，不覆盖已发布版本。准备版本号不代表 npm 已公开发布或线上入口已开启；`ODR_AGENT_INSTALL_ENABLED` 和 `ODR_SUPPORT_ENABLED` 保持默认关闭。
 
-临时协助仅支持 Windows：发起者登录创建邀请，被协助者无需登录，但必须在本机交互终端输入 `YES` 明确同意。发布后将 `ODR_SUPPORT_AGENT_VERSION` 指向已公开且已验证的精确版本；首次连接、READY、真实工具调用及双方结束协助的验收仍需单独完成。macOS 的普通设备接入继续支持，临时协助尚不支持。
+临时协助仅支持 Windows：发起者登录创建邀请，被协助者无需登录。普通命令行仍要求输入 `YES`；0.1.6 起下载启动文件通过显式 `--accept-support` 将运行文件作为开始协助的动作，页面和窗口均说明完整远程权限。发布后将 `ODR_SUPPORT_AGENT_VERSION` 指向已公开且已验证的精确版本；下载启动、READY、真实工具调用及双方结束协助的验收仍需单独完成。macOS 的普通设备接入继续支持，临时协助尚不支持。
 
 ## 配置 npm Trusted Publisher
 
@@ -41,14 +41,14 @@ Agent 发行版本的唯一来源是 `apps/agent/src/version.json`。Relay 握�
 
 1. 将本分支合并到 GitHub 的 `master` 后，打开 GitHub → Actions → `Agent npm staged release` → Run workflow；这是**只验证、不发布**的安全测试。
 2. 先查询 npm Registry，确认候选版本尚未公开；已发布版本不能被覆盖，也不能因包名和版本相同就跳过内容核验。
-3. 新版本从 `master` 修改：`node scripts/set-agent-version.mjs 0.1.5`（本次候选），提交这些改动并运行测试。打包后可只读运行 `node scripts/check-agent-publication.mjs` 检查版本可用性。
-4. 新版本代码合并进入 `master` 后，从该提交创建标签 `agent-v0.1.5` 并推送：
+3. 新版本从 `master` 修改：`node scripts/set-agent-version.mjs 0.1.6`（本次候选），提交这些改动并运行测试。打包后可只读运行 `node scripts/check-agent-publication.mjs` 检查版本可用性。
+4. 新版本代码合并进入 `master` 后，从该提交创建标签 `agent-v0.1.6` 并推送：
 
 ```bash
 git checkout master
 git pull --ff-only
-git tag agent-v0.1.5
-git push origin agent-v0.1.5
+git tag agent-v0.1.6
+git push origin agent-v0.1.6
 ```
 
 5. GitHub Actions 自动验证标签版本和 `master` 提交关系，通过后创建带下载附件的 GitHub Release，并执行 `npm stage publish --access public`。新标签验证和暂存前都会查询公开 npm Registry：只有明确的 HTTP 404 表示版本可用；已发布版本、认证/限流/服务端错误、网络失败和超时均阻止暂存。即使已发布元数据看似相同，也不把它当作本次 tarball 内容相同的证据。

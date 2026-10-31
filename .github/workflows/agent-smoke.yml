@@ -40,6 +40,8 @@ jobs:
           pnpm --filter @open-desktop-remote/agent test:run
       - name: Installer private runtime PATH regression
         run: node --test scripts/installer-runtime-path.test.mjs
+      - name: Downloaded support launcher regression
+        run: node --test scripts/support-launcher.test.mjs
       - name: Installer verified mirror and fallback regression
         run: node --test scripts/installer-download-source.test.mjs
       - name: Validate macOS installer syntax

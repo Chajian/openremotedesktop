@@ -38,6 +38,21 @@ After approval the Agent receives a long-lived device refresh credential. It pre
 
 The Server stores only verifier/hash material for the long-lived credential.
 
+## Temporary Windows support
+
+`agent support --server https://remote.example.com --invite <invite>` joins a
+temporary support session after interactive `YES` consent. This mode does not use
+ordinary saved pairing credentials. The requester must first create an invitation.
+
+From Agent 0.1.6, the Server can generate a Windows `.cmd` download that embeds the
+invitation and reuses the verified installer. Double-clicking starts support
+without entering a code or `YES`; the launcher explicitly passes `--accept-support`.
+That option is accepted only by `agent support`, and keeps the permission notice
+visible. It grants full file/terminal access as the current OS user. Keep the
+foreground window open and press Ctrl+C to end and revoke access. The normal CLI
+continues to prompt when the option is absent. See the
+[downloaded support flow](one-command-onboarding.md#downloaded-windows-temporary-support).
+
 ## Connection lifecycle
 
 The Agent:

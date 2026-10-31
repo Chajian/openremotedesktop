@@ -5,6 +5,7 @@ import { localeFromRequest } from "../dashboard/ui/i18n.js";
 import { publicBaseUrlForHost, type ServerConfig } from "../config.js";
 import { SupportService, SupportNotFoundError,
   SupportInviteExpiredError, SupportAlreadyJoinedError } from "./support-service.js";
+import { supportDownloadUrl, supportLauncher, supportsDownloadedLauncher } from "./support-launcher.js";
 
 function errorReply(reply: {code(n: number): {send(data: unknown): unknown}}, error: unknown) {
   if (error instanceof SupportNotFoundError) return reply.code(404).send({error:"SUPPORT_NOT_FOUND"});
@@ -14,6 +15,22 @@ function errorReply(reply: {code(n: number): {send(data: unknown): unknown}}, er
 }
 
 export function registerSupportRoutes(app: FastifyInstance, support: SupportService, config: ServerConfig): void {
+  app.get("/support/invite/:invite/windows.cmd", async (request, reply) => {
+    reply.header("Cache-Control", "no-store").header("Referrer-Policy", "no-referrer");
+    reply.header("X-Content-Type-Options", "nosniff");
+    if (!config.supportEnabled || !config.agentInstallEnabled || !supportsDownloadedLauncher(config.supportAgentVersion)) {
+      return reply.code(404).send();
+    }
+    const {invite} = request.params as {invite: string};
+    try {
+      support.preview(invite);
+      const origin = publicBaseUrlForHost(config, request.headers.host);
+      const source = downloadSourceFromQuery((request.query as {downloadSource?: unknown}).downloadSource);
+      const file = supportLauncher(origin, invite, config.supportAgentVersion!, source);
+      return reply.header("Content-Disposition", 'attachment; filename="OpenRemote-Support.cmd"')
+        .type("application/octet-stream").send(file);
+    } catch (error) { return errorReply(reply, error); }
+  });
   app.get("/support/invite/:invite", async (request, reply) => {
     if (!config.supportEnabled) return reply.code(404).send();
     reply.header("Cache-Control","no-store").header("Referrer-Policy","no-referrer");
@@ -29,7 +46,9 @@ export function registerSupportRoutes(app: FastifyInstance, support: SupportServ
         : undefined;
       return reply.type("text/html; charset=utf-8").send(renderCustomerSupport(
         localeFromRequest(request), baseUrl, invite,
-        preview.label, preview.inviteExpiresAt, install, downloadSource));
+        preview.label, preview.inviteExpiresAt, install, downloadSource,
+        install && supportsDownloadedLauncher(config.supportAgentVersion)
+          ? supportDownloadUrl(baseUrl, invite, downloadSource) : undefined));
     } catch (error) { return errorReply(reply, error); }
   });
 

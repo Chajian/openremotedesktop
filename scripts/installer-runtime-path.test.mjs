@@ -15,6 +15,22 @@ const npmDirectory = [
   resolve(nodeDirectory, "../share/nodejs/npm"),
 ].find((path) => existsSync(join(path, "bin/npm-cli.js")));
 
+test('automatic support rejects missing invitations and incompatible versions before installing', {skip: !windows}, (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'odr-support-guard-'));
+  t.after(() => rmSync(directory, {recursive: true, force: true}));
+  const install = join(directory, 'must-not-be-created');
+  for (const [args, message] of [
+    [[], 'AcceptSupport requires a support invitation'],
+    [['-SupportInvite', 'X'.repeat(32), '-PackageSource', 'open-desktop-remote-agent@0.1.5'], 'require Agent 0.1.6 or newer'],
+  ]) {
+    const result = run('powershell.exe', ['-NoProfile', '-File', join(root, 'scripts/install-windows.ps1'),
+      '-Server', 'https://remote.example.test', '-InstallDir', install, '-AcceptSupport', ...args]);
+    assert.notEqual(result.status, 0);
+    assert((result.stdout + result.stderr).includes(message));
+    assert.equal(existsSync(install), false);
+  }
+});
+
 function run(command, args, options = {}) {
   return spawnSync(command, args, { encoding: "utf8", timeout: 60_000, ...options });
 }
@@ -64,7 +80,7 @@ function fixture(t) {
   return { directory, install, bin, archive, systemTools, packageDirectory };
 }
 
-for (const mode of ["install-only", "connect", "npm-failure", ...(windows ? ["support", "support-failure"] : [])]) {
+for (const mode of ["install-only", "connect", "npm-failure", ...(windows ? ["support", "support-failure", "support-launcher"] : [])]) {
   test(`installer supplies private Node to child processes (${mode})`, (t) => {
     const f = fixture(t);
     const support = mode.startsWith("support");
@@ -74,7 +90,7 @@ for (const mode of ["install-only", "connect", "npm-failure", ...(windows ? ["su
       // so the real installer takes its reuse path without contacting a registry.
       const installed = join(f.install, "node_modules/open-desktop-remote-agent");
       cpSync(f.packageDirectory, installed, { recursive: true });
-      writeFileSync(join(installed, "package.json"), JSON.stringify({ name: "open-desktop-remote-agent", version: "0.1.4" }));
+      writeFileSync(join(installed, "package.json"), JSON.stringify({ name: "open-desktop-remote-agent", version: mode === "support-launcher" ? "0.1.6" : "0.1.4" }));
     }
     const installEvidence = join(f.directory, "postinstall-node.txt");
     const connectEvidence = join(f.directory, "connect-node.txt");
@@ -93,7 +109,9 @@ for (const mode of ["install-only", "connect", "npm-failure", ...(windows ? ["su
         if (Get-Command node -ErrorAction SilentlyContinue) { throw 'Fixture unexpectedly has global Node' }
         $odrTestFailure = $null
         try {
-          if ($Mode.StartsWith('support')) {
+          if ($Mode -eq 'support-launcher') {
+            . $Installer -Server https://remote.example.test -InstallDir $Destination -PackageSource open-desktop-remote-agent@0.1.6 -SupportInvite '${invite}' -AcceptSupport
+          } elseif ($Mode.StartsWith('support')) {
             . $Installer -Server https://remote.example.test -InstallDir $Destination -PackageSource open-desktop-remote-agent@0.1.4 -SupportInvite '${invite}'
           } else {
             . $Installer -Server https://remote.example.test -InstallDir $Destination -PackageSource $Archive -InstallOnly:($Mode -ne 'connect')
@@ -127,6 +145,7 @@ for (const mode of ["install-only", "connect", "npm-failure", ...(windows ? ["su
       assert.deepEqual(JSON.parse(readFileSync(argumentEvidence, "utf8")), [
         "agent", support ? "support" : "connect", "--server", "https://remote.example.test",
         ...(support ? ["--invite", invite] : []),
+        ...(mode === "support-launcher" ? ["--accept-support"] : []),
       ]);
     }
   });

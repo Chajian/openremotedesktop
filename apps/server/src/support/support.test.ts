@@ -11,11 +11,11 @@ import {RequestBroker} from "../relay/request-broker.js";
 import {DeviceManagementService} from "../devices/device-management-service.js";
 import {SupportService} from "./support-service.js";
 
-async function fixture(enabled = true, agentInstallEnabled = false) {
+async function fixture(enabled = true, agentInstallEnabled = false, version = "0.1.4") {
   const db = createDatabase(":memory:");
   const app = buildApp({db,config:{databasePath:":memory:",
     publicBaseUrl:new URL("https://remote.example.com"),environment:"test",supportEnabled:enabled,agentInstallEnabled,
-    ...(agentInstallEnabled ? {supportAgentVersion:"0.1.4"} : {})}});
+    ...(agentInstallEnabled ? {supportAgentVersion:version} : {})}});
   const owners = new OwnerRepository(db);
   const owner = await owners.bootstrapOwner({password:"fixture-secret-passphrase"});
   const login = await app.inject({method:"POST",url:"/api/login",
@@ -29,6 +29,48 @@ const inviteFrom = (html:string) =>
   /https:\/\/remote\.example\.com\/support\/invite\/([A-Za-z0-9_-]{32})/.exec(html)?.[1] ?? "";
 
 describe("temporary support sessions", () => {
+  it("downloads an anonymous launcher without consuming the invite, and rejects unavailable invites", async () => {
+    const f = await fixture(true, true, "0.1.6");
+    try {
+      const page = await f.app.inject({url:"/dashboard/support",headers:{cookie:f.cookie}});
+      const created = await f.app.inject({method:"POST",url:"/dashboard/support/create",
+        headers:{cookie:f.cookie},payload:{csrf:csrf(page.body),label:"Launcher"}});
+      const invite = inviteFrom(created.body);
+      const url = `/support/invite/${invite}/windows.cmd`;
+      expect(created.body).toContain(url);
+      const download = await f.app.inject({url});
+      expect(download.statusCode).toBe(200);
+      expect(download.headers["content-disposition"]).toBe('attachment; filename="OpenRemote-Support.cmd"');
+      expect(download.headers["cache-control"]).toBe("no-store");
+      expect(download.body).toContain("@echo off\r\n");
+      expect(download.body).toContain(invite);
+      expect(download.body).toContain("open-desktop-remote-agent@0.1.6");
+      expect(download.body).toContain("-AcceptSupport");
+      expect(download.body).toContain("Get-FileHash -Algorithm SHA256");
+      expect(download.body).toContain("https://remote.example.com/install/windows.ps1");
+      expect(download.body).not.toContain("YES");
+      expect((await f.app.inject({url:url+"?downloadSource=npmmirror"})).body).toContain("-DownloadSource 'npmmirror'");
+      expect((await f.app.inject({url:url+"?downloadSource=evil"})).body).not.toContain("-DownloadSource");
+      expect((await f.app.inject({url:"/api/devices",headers:{cookie:f.cookie}})).json()).toEqual([]);
+      expect((await f.app.inject({url:`/support/invite/${invite}`})).body).toContain(url);
+      f.db.prepare('UPDATE support_sessions SET invite_expires_at=0').run();
+      expect((await f.app.inject({url})).statusCode).toBe(410);
+      f.db.prepare('UPDATE support_sessions SET invite_expires_at=?').run(Date.now()+300_000);
+      await f.app.inject({method:"POST",url:"/api/support/join",payload:{invite,deviceName:"Test Windows",platform:"win32"}});
+      expect((await f.app.inject({url})).statusCode).toBe(409);
+      f.db.prepare('UPDATE support_sessions SET ended_at=?').run(Date.now());
+      expect((await f.app.inject({url})).statusCode).toBe(404);
+    } finally { await f.dispose(); }
+  });
+
+  it("does not expose launcher downloads for disabled or older installations", async () => {
+    for (const args of [[false,true,"0.1.6"],[true,false,"0.1.6"],[true,true,"0.1.5"]] as const) {
+      const f = await fixture(args[0], args[1], args[2]);
+      try {
+        expect((await f.app.inject({url:`/support/invite/${"x".repeat(32)}/windows.cmd`})).statusCode).toBe(404);
+      } finally { await f.dispose(); }
+    }
+  });
   it("selects a verified mirror command anonymously without joining the invitation", async () => {
     const f = await fixture(true, true);
     try {
