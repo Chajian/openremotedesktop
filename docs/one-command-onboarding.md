@@ -43,6 +43,38 @@
 
 ## Release and maintenance
 
+### Optional China download acceleration
+
+The device wizard and released Windows support installer offer **Official (default)**
+and **China acceleration (npmmirror)**. The script URL stays on the same trusted
+Server origin and its SHA-256 remains pinned in the displayed command. This does
+not configure a CDN or change global npm settings.
+
+For a saved, verified installer, select acceleration with
+`-DownloadSource npmmirror` on Windows or `--download-source npmmirror` on macOS.
+The default remains `official`. Only exact `open-desktop-remote-agent@X.Y.Z`
+packages can use acceleration; use `official` for custom/local package inputs.
+
+- Node.js archive bytes may come from npmmirror, but their expected SHA-256 is
+  always obtained from nodejs.org. A failed mirror download falls back to the
+  official archive. A checksum mismatch aborts before extraction.
+- The exact Agent package metadata and SHA-512 come from registry.npmjs.org.
+  The downloaded Agent tarball is verified before npm installation. A missing or
+  unreachable mirror falls back to the official tarball and registry; a digest
+  mismatch or missing authoritative metadata aborts.
+- Transitive packages use the selected registry's metadata and npm integrity
+  checks. This is not independent verification of the entire dependency tree
+  against an official lockfile. Third-party lifecycle downloads are not redirected.
+- Registry selection applies only to the install command. npm failures after
+  installation begins are reported, not automatically replayed: lifecycle
+  scripts may already have run. Reused installations retain their device identity.
+
+The official metadata endpoints must remain reachable even with acceleration.
+Mirror timing depends on the device network and package synchronization; selecting
+a mirror does not guarantee faster installation.
+
+### Release checklist
+
 1. Merge PR after CI and review; confirm all three platform Agent-smoke jobs.
 2. If a new version is needed, run `node scripts/set-agent-version.mjs X.Y.Z`
    **before merging**. This updates npm manifest, both installers and web label.

@@ -11,10 +11,11 @@ import {RequestBroker} from "../relay/request-broker.js";
 import {DeviceManagementService} from "../devices/device-management-service.js";
 import {SupportService} from "./support-service.js";
 
-async function fixture(enabled = true) {
+async function fixture(enabled = true, agentInstallEnabled = false) {
   const db = createDatabase(":memory:");
   const app = buildApp({db,config:{databasePath:":memory:",
-    publicBaseUrl:new URL("https://remote.example.com"),environment:"test",supportEnabled:enabled}});
+    publicBaseUrl:new URL("https://remote.example.com"),environment:"test",supportEnabled:enabled,agentInstallEnabled,
+    ...(agentInstallEnabled ? {supportAgentVersion:"0.1.4"} : {})}});
   const owners = new OwnerRepository(db);
   const owner = await owners.bootstrapOwner({password:"fixture-secret-passphrase"});
   const login = await app.inject({method:"POST",url:"/api/login",
@@ -28,6 +29,27 @@ const inviteFrom = (html:string) =>
   /https:\/\/remote\.example\.com\/support\/invite\/([A-Za-z0-9_-]{32})/.exec(html)?.[1] ?? "";
 
 describe("temporary support sessions", () => {
+  it("selects a verified mirror command anonymously without joining the invitation", async () => {
+    const f = await fixture(true, true);
+    try {
+      const page = await f.app.inject({url:"/dashboard/support",headers:{cookie:f.cookie}});
+      const created = await f.app.inject({method:"POST",url:"/dashboard/support/create",
+        headers:{cookie:f.cookie},payload:{csrf:csrf(page.body),label:"Download source"}});
+      const invite = inviteFrom(created.body);
+      expect(invite).toMatch(/^[A-Za-z0-9_-]{32}$/);
+      const url = `/support/invite/${invite}`;
+      const official = await f.app.inject({url});
+      const mirror = await f.app.inject({url:url+"?downloadSource=npmmirror"});
+      expect(mirror.statusCode).toBe(200);
+      expect(mirror.body).toContain("-DownloadSource &#39;npmmirror&#39;");
+      expect(mirror.body).toContain("-SupportInvite &#39;"+invite+"&#39;");
+      expect(mirror.body).not.toContain('action="/login"');
+      expect(official.body).not.toContain("-DownloadSource");
+      const invalid = await f.app.inject({url:url+"?downloadSource=untrusted"});
+      expect(invalid.body).not.toContain("-DownloadSource");
+      expect((await f.app.inject({url:"/api/devices",headers:{cookie:f.cookie}})).json()).toEqual([]);
+    } finally {await f.dispose();}
+  });
   it("requires the feature flag and an authenticated creator", async () => {
     const f = await fixture(false);
     try {

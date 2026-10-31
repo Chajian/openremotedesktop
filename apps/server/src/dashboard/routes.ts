@@ -41,7 +41,7 @@ import type { ConnectionRegistry } from "../relay/connection-registry.js";
 import type { OAuthClientRepository } from "../oauth/client-repository.js";
 import { sessionCookie } from "../routes/login.js";
 import { CsrfProtection } from "./csrf.js";
-import { installerSource } from "./installer.js";
+import { installerSource, downloadSourceFromQuery } from "./installer.js";
 import { renderPairingPage } from "./onboarding.js";
 import { renderConnectPage, type AgentOs, type WizardStep } from "./wizard.js";
 
@@ -286,11 +286,12 @@ export function registerDashboardRoutes(
     const auth = requireDashboardAuth(request, reply, deps.sessions);
     if (!auth) return;
     interactivePage(reply);
-    const query = request.query as { os?: unknown; step?: unknown; code?: unknown };
+    const query = request.query as { os?: unknown; step?: unknown; code?: unknown; downloadSource?: unknown };
     const os: AgentOs = query.os === "mac" || query.os === "linux" ? query.os : "win";
     const step: WizardStep = query.step === "2" ? 2 : query.step === "3" ? 3 : 1;
     return reply.type("text/html; charset=utf-8").send(renderConnectPage({
       os, step, baseUrl: publicBaseUrlForHost(deps.config, request.headers.host),
+      downloadSource: downloadSourceFromQuery(query.downloadSource),
       enabled: deps.config.agentInstallEnabled === true,
       csrf: csrf.tokenFor(auth.sessionToken),
       ...(typeof query.code === "string" ? { code: query.code } : {}),

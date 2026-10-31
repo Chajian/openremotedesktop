@@ -299,6 +299,12 @@ describe("one-command onboarding", () => {
       expect(page.body).toContain(createHash("sha256").update(script.rawPayload).digest("hex"));
       expect(page.body).toContain(endpoint);
       expect(page.body).toContain("复制命令");
+      const accelerated = await app.inject({ url: "/dashboard/connect?step=2&os=" + os + "&downloadSource=npmmirror", headers: { cookie } });
+      expect(accelerated.body).toContain(os === "win" ? "-DownloadSource" : "--download-source");
+      expect(accelerated.body).toContain(createHash("sha256").update(script.rawPayload).digest("hex"));
+      const invalidSource = await app.inject({ url: "/dashboard/connect?step=2&os=" + os + "&downloadSource=https%3A%2F%2Fevil.test", headers: { cookie } });
+      expect(invalidSource.body).not.toContain("evil.test");
+      expect(invalidSource.body).not.toContain(os === "win" ? "-DownloadSource" : "--download-source");
     }
     expect((await app.inject({ url: "/dashboard/onboarding.js" })).body).toContain("setInterval(poll, 2500)");
   });

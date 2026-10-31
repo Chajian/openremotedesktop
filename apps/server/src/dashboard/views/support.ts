@@ -3,6 +3,7 @@ import { html, type SafeHtml } from "../ui/html.js";
 import { appDocument, pageHead, hiddenInput, soloDocument, type ShellContext } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
 import { t, type Locale, formatDateTime } from "../ui/i18n.js";
+import type { DownloadSource } from "../installer.js";
 
 export function renderSupportDashboard(
   ctx: ShellContext, sessions: SupportSession[],
@@ -54,7 +55,7 @@ export function renderSupportCreated(ctx: ShellContext, invite: string, session:
 }
 
 export function renderCustomerSupport(locale: Locale, baseUrl: URL, invite: string,
-  label: string, expiresAt: number, installCommand?: string): string {
+  label: string, expiresAt: number, installCommand?: string, downloadSource: DownloadSource = "official"): string {
   const command = installCommand ??
     `pnpm --filter @open-desktop-remote/agent start -- agent support --server ${baseUrl.origin} --invite ${invite}`;
   const body: SafeHtml = html`<section class="solo-card card">
@@ -63,6 +64,10 @@ export function renderCustomerSupport(locale: Locale, baseUrl: URL, invite: stri
     <p>${t(locale,"support.customerFullAccess")}</p>
     <p class="muted">${t(locale,"support.inviteExpiry")}: ${formatDateTime(locale,expiresAt)}</p>
     <p class="muted">${t(locale,installCommand ? "support.installerReady" : "support.devOnly")}</p>
+    ${installCommand ? html`<div class="field"><p>${t(locale,"installer.downloadSource")}</p>
+      <a class="btn ${downloadSource === "official" ? "btn-primary" : "btn-secondary"}" href="?downloadSource=official">${t(locale,"installer.official")}</a>
+      <a class="btn ${downloadSource === "npmmirror" ? "btn-primary" : "btn-secondary"}" href="?downloadSource=npmmirror">${t(locale,"installer.npmmirror")}</a>
+      <p class="muted">${t(locale,"installer.sourceHint")}</p></div>` : null}
     <div class="code"><div class="code-bar">PowerShell</div>
       <div class="code-body" style="overflow-wrap:anywhere">${command}</div></div>
     <button class="btn btn-secondary" type="button" data-copy="${command}" data-copied-label="${t(locale,"common.copied")}">
