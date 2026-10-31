@@ -13,7 +13,7 @@ describe("temporary support Windows installer",()=>{
     expect(result.command).toContain(" -SupportInvite '"+invite+"'");
     expect(result.command).toContain(" -PackageSource 'open-desktop-remote-agent@0.1.4'");
     expect(result.version).toBe("0.1.4");
-    expect(installerInstructions("win",new URL("https://remote.example.com")).version).toBe("0.1.4");
+    expect(installerInstructions("win",new URL("https://remote.example.com")).version).toBe("0.1.5");
     expect(result.command).not.toContain("agent connect");
     expect(()=>installerInstructions("mac",new URL("https://remote.example.com"),
       {invite,version:"0.1.4"})).toThrow();

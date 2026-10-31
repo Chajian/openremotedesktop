@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-export const AGENT_INSTALL_VERSION = "0.1.4";
+export const AGENT_INSTALL_VERSION = "0.1.5";
 export type InstallerOS = "win" | "mac";
 export type DownloadSource = "official" | "npmmirror";
 export function downloadSourceFromQuery(value: unknown): DownloadSource {

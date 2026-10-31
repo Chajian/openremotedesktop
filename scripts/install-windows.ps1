@@ -1,7 +1,7 @@
 # Open Desktop Remote Agent installer (user-level; no system PATH changes).
 param(
   [Parameter(Mandatory = $true)][string]$Server,
-  [string]$PackageSource = 'open-desktop-remote-agent@0.1.4',
+  [string]$PackageSource = 'open-desktop-remote-agent@0.1.5',
   [ValidateSet('official', 'npmmirror')][string]$DownloadSource = 'official',
   [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'OpenDesktopRemote'),
   [switch]$InstallOnly,
