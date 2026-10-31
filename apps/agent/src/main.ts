@@ -12,11 +12,15 @@ const command = parseAgentCommand(process.argv.slice(2));
 const controller = new AbortController();
 
 function stop() {
+  if (controller.signal.aborted) return;
+  if (command.command === "support") console.log("Ending temporary support. Please wait for revocation to finish.");
   controller.abort();
 }
 
-process.once("SIGINT", stop);
-process.once("SIGTERM", stop);
+// Keep handling repeated signals while executor shutdown and support revocation
+// are pending. A once listener restores Node's default termination too early.
+process.on("SIGINT", stop);
+process.on("SIGTERM", stop);
 
 try {
   if (command.command === "support") await runSupportConnect(command.serverUrl, command.invite, controller.signal);

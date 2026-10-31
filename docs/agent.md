@@ -102,6 +102,12 @@ its owned socket, and runtime waits for the executor's existing cleanup result.
 An unresponsive relay peer cannot hold shutdown open by withholding a WebSocket
 close reply. Saved credentials remain available for the next start.
 
+In temporary support mode, wait for the remote-access revocation confirmation
+before closing the terminal. Repeated Ctrl+C/SIGTERM during cleanup does not
+interrupt the revoke request. If revocation cannot be confirmed, ask the session
+creator to end support in Dashboard. Killing the process or closing its window
+can still prevent cleanup; a disconnected device alone is not proof of revocation.
+
 Stopping does not undo effects of an already dispatched tool call. Unknown
 execution outcomes remain unknown and are never automatically replayed. An
 unconfirmed executor shutdown remains an error and prevents an unsafe replacement.

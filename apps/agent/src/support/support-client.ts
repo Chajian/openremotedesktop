@@ -90,8 +90,12 @@ export async function runSupportConnect(
   try {
     // The Relay was cancelled; perform a bounded, independent revoke request.
     await client.stopSupport(joined.refreshCredential);
+    console.log("Temporary support ended. Remote access has been revoked.");
   } catch (error) {
-    if (!(error instanceof ServerRequestError && error.status === 404)) stopError = error;
+    if (!(error instanceof ServerRequestError && error.status === 404)) {
+      stopError = error;
+      console.error("Could not confirm remote access revocation. Ask the session creator to end support in Dashboard.");
+    }
   }
   if (runtimeError && stopError) throw new AggregateError(
     [runtimeError, stopError], "Support runtime and revoke both failed");

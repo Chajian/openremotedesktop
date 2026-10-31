@@ -9,7 +9,7 @@ function fixture() {
     supportPreview:vi.fn(async()=>({label:"Customer Support",inviteExpiresAt:Date.now()+300_000,access:"full" as const})),
     joinSupport:vi.fn(async()=>({deviceId:"11111111-1111-4111-8111-111111111111",
       refreshCredential:"r".repeat(43),sessionId:"s1"})),
-    stopSupport:vi.fn(async()=>undefined),
+    stopSupport:vi.fn(async(): Promise<void> => undefined),
     supportStatus:vi.fn(async ():Promise<{state:"active"}|{state:"ended";reason:"owner"|"customer"}> =>
       ({state:"ended",reason:"owner"})),
   };
@@ -17,6 +17,41 @@ function fixture() {
 }
 
 describe("customer support agent",()=>{
+  it("confirms revocation only after the stop endpoint succeeds", async () => {
+    const client = fixture();
+    const controller = new AbortController();
+    const revoke = Promise.withResolvers<void>();
+    const requested = Promise.withResolvers<void>();
+    client.stopSupport.mockImplementationOnce(() => { requested.resolve(); return revoke.promise; });
+    const output = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const running = runSupportConnect(new URL("https://remote.example.com"), "i".repeat(32),
+      controller.signal, {client, consent: async () => true, runAgent: async () => { controller.abort(); }});
+    try {
+      await requested.promise;
+      expect(output).not.toHaveBeenCalledWith("Temporary support ended. Remote access has been revoked.");
+      revoke.resolve();
+      await running;
+      expect(output).toHaveBeenCalledWith("Temporary support ended. Remote access has been revoked.");
+    } finally { revoke.resolve(); await running; output.mockRestore(); }
+  });
+
+  it("reports unconfirmed revocation without printing server details or success", async () => {
+    const client = fixture();
+    const controller = new AbortController();
+    const failure = new Error("fixture-private-response");
+    client.stopSupport.mockRejectedValueOnce(failure);
+    const output = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await expect(runSupportConnect(new URL("https://remote.example.com"), "i".repeat(32),
+        controller.signal, {client, consent: async () => true, runAgent: async () => { controller.abort(); }}))
+        .rejects.toBe(failure);
+      expect(errors).toHaveBeenCalledWith("Could not confirm remote access revocation. Ask the session creator to end support in Dashboard.");
+      expect(output).not.toHaveBeenCalledWith("Temporary support ended. Remote access has been revoked.");
+      expect(JSON.stringify(errors.mock.calls)).not.toContain("fixture-private-response");
+    } finally { output.mockRestore(); errors.mockRestore(); }
+  });
+
   it("requires local approval before using the invite",async()=>{
     const client=fixture();
     await expect(runSupportConnect(new URL("https://remote.example.com"),"i".repeat(32),
