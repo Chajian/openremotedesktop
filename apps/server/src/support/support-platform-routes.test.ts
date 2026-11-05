@@ -5,7 +5,8 @@ import {createDatabase} from "../db/database.js";
 import {OwnerRepository} from "../auth/owner-repository.js";
 import {installerSource} from "../dashboard/installer.js";
 
-const platforms = [["mac", "macos.command", "OpenRemote-Support.command", "macos.sh"],
+const platforms = [["win", "windows.cmd", "OpenRemote-Support.cmd", "windows.ps1"],
+  ["mac", "macos.command", "OpenRemote-Support.command", "macos.sh"],
   ["linux", "linux.sh", "OpenRemote-Support.sh", "linux.sh"]] as const;
 async function fixture(enabled = true, install = true, version = "0.1.6") {
   const db = createDatabase(":memory:");
@@ -22,7 +23,7 @@ async function fixture(enabled = true, install = true, version = "0.1.6") {
   return {app,db,created,invite,async dispose(){await app.close();db.close();}};
 }
 
-describe("POSIX support invitation downloads", () => {
+describe("cross-platform support invitation downloads", () => {
   it.each(platforms)("serves %s file and commands with mirror selection without redeeming the invitation", async (os, suffix, filename, installer) => {
     const f = await fixture();
     try {
@@ -35,21 +36,39 @@ describe("POSIX support invitation downloads", () => {
       expect(download.headers["content-disposition"]).toBe(`attachment; filename="${filename}"`);
       expect(download.headers["cache-control"]).toBe("no-store");
       expect(download.headers["referrer-policy"]).toBe("no-referrer");
-      expect(download.body).toMatch(/^#!\/usr\/bin\/env bash\n/);
+      expect(download.headers["x-content-type-options"]).toBe("nosniff");
+      expect(download.headers["content-type"]).toBe("application/octet-stream");
+      expect(download.body).toMatch(os === "win" ? /^@echo off\r\n/ : /^#!\/usr\/bin\/env bash\n/);
       expect(download.body).toContain(`https://new.example.com/install/${installer}`);
       expect(download.body).toContain(createHash("sha256").update(installerSource(os)).digest("hex"));
-      expect(download.body).toContain("--accept-support");
-      expect(download.body).toContain("--download-source 'npmmirror'");
+      expect(download.body).toContain(os === "win" ? "-AcceptSupport" : "--accept-support");
+      expect(download.body).toContain(os === "win" ? "-DownloadSource 'npmmirror'" : "--download-source 'npmmirror'");
       expect(download.body).not.toContain("spoof.example.com");
+      const script = await f.app.inject({url:`/install/${installer}`});
+      expect(script.statusCode).toBe(200);
+      expect(script.rawPayload).toEqual(installerSource(os));
       const page = await f.app.inject({url:`${path}?os=${os}&downloadSource=npmmirror`,headers});
       expect(page.statusCode).toBe(200);
+      expect(page.headers["cache-control"]).toBe("no-store");
+      expect(page.headers["referrer-policy"]).toBe("no-referrer");
+      expect(page.headers["x-frame-options"]).toBe("DENY");
+      expect(page.headers["content-security-policy"]).toBe("default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'");
       expect(page.body).toContain(`${path}/${suffix}?downloadSource=npmmirror`);
-      expect(page.body).toContain("--support-invite");
-      expect(page.body).toContain("--download-source");
+      expect(page.body).toContain(`https://new.example.com/install/${installer}`);
+      expect(page.body).not.toContain("spoof.example.com");
+      expect(page.body).toContain(os === "win" ? "-SupportInvite" : "--support-invite");
+      expect(page.body).toContain(os === "win" ? "-DownloadSource" : "--download-source");
+      expect(page.body).not.toMatch(/--accept-support|-AcceptSupport/);
+      expect(page.body).toContain(`?os=${os}&amp;downloadSource=official`);
+      expect(page.body).toContain("os=win&amp;downloadSource=npmmirror");
       expect(page.body).toContain("os=mac&amp;downloadSource=npmmirror");
       expect(page.body).toContain("os=linux&amp;downloadSource=npmmirror");
-      expect(page.body).toContain(`bash ~/Downloads/${filename}`);
-      expect(page.body).not.toContain("PowerShell");
+      if (os === "win") {
+        expect(page.body).toContain("PowerShell");
+      } else {
+        expect(page.body).toContain(`bash ~/Downloads/${filename}`);
+        expect(page.body).not.toContain("PowerShell");
+      }
       expect((f.db.prepare("SELECT count(*) AS n FROM devices").get() as {n:number}).n).toBe(0);
       expect((await f.app.inject({url:`/api/support/invite/${f.invite}`})).statusCode).toBe(200);
       f.db.prepare("UPDATE support_sessions SET invite_expires_at=0").run();
@@ -68,8 +87,9 @@ describe("POSIX support invitation downloads", () => {
       expect(download.body).not.toContain("spoof.example.com");
       const fallback = await f.app.inject({url:`${path}?os=freebsd`});
       expect(fallback.body).toContain(`${path}/windows.cmd`);
+      expect(fallback.body).toBe((await f.app.inject({url:path})).body);
       const joined = await f.app.inject({method:"POST",url:"/api/support/join",
-        payload:{invite:f.invite,deviceName:"Support fixture",platform:os === "mac" ? "darwin" : "linux"}});
+        payload:{invite:f.invite,deviceName:"Support fixture",platform:os === "win" ? "win32" : os === "mac" ? "darwin" : "linux"}});
       expect(joined.statusCode).toBe(201);
       expect((await f.app.inject({url:`${path}/${suffix}`})).statusCode).toBe(409);
       const stopped = await f.app.inject({method:"POST",url:"/api/support/stop",payload:{refreshCredential:joined.json().refreshCredential}});

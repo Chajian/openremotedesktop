@@ -43,6 +43,7 @@ import { sessionCookie } from "../routes/login.js";
 import { CsrfProtection } from "./csrf.js";
 import { supportDownloadUrl, supportsDownloadedLauncher } from "../support/support-launcher.js";
 import { installerSource, downloadSourceFromQuery } from "./installer.js";
+import { installerOperatingSystems, installerPlatforms } from "./platforms.js";
 import { renderPairingPage } from "./onboarding.js";
 import { renderConnectPage, type AgentOs, type WizardStep } from "./wizard.js";
 
@@ -278,12 +279,8 @@ export function registerDashboardRoutes(
       readFileSync(new URL("./onboarding-client.js", import.meta.url)));
   });
 
-  for (const [route, os] of [
-    ["/install/windows.ps1", "win"],
-    ["/install/macos.sh", "mac"],
-    ["/install/linux.sh", "linux"],
-  ] as const) {
-    app.get(route, async (_request, reply) => {
+  for (const os of installerOperatingSystems) {
+    app.get(installerPlatforms[os].installer.route, async (_request, reply) => {
       if (!deps.config.agentInstallEnabled) return reply.code(404).send();
       reply.header("Cache-Control", "no-store");
       return reply.type("text/plain; charset=utf-8").send(installerSource(os));

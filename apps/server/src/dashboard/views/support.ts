@@ -3,9 +3,10 @@ import { html, type SafeHtml } from "../ui/html.js";
 import { appDocument, pageHead, hiddenInput, soloDocument, type ShellContext } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
 import { t, type Locale, formatDateTime } from "../ui/i18n.js";
-import type { DownloadSource, InstallerOS } from "../installer.js";
+import type { DownloadSource } from "../installer.js";
+import { installerOperatingSystems, installerPlatforms, type InstallerOS } from "../platforms.js";
 
-const systems = [{os:"win", label:"Windows"}, {os:"mac", label:"macOS"}, {os:"linux", label:"Linux"}] as const;
+const systems = installerOperatingSystems.map(os => ({os, ...installerPlatforms[os]}));
 
 export function renderSupportDashboard(
   ctx: ShellContext, sessions: SupportSession[],
@@ -49,11 +50,11 @@ export function renderSupportCreated(ctx: ShellContext, invite: string, session:
       <button class="btn btn-primary" data-copy="${url}" data-copied-label="${t(ctx.locale,"common.copied")}" type="button">
         ${icon("copy",15)}<span data-copy-label>${t(ctx.locale,"support.copyLink")}</span>
       </button>
-      ${downloads ? html`${systems.map(({os,label}) => html`<section style="margin-top:20px"><h3>${label}</h3>
+      ${downloads ? html`${systems.map(({os,label,support}) => html`<section style="margin-top:20px"><h3>${label}</h3>
         <a class="btn btn-secondary" href="${downloads[os]}">${t(ctx.locale,"support.download",{os:label})}</a>
         <button class="btn btn-secondary" type="button" data-copy="${downloads[os]}" data-copied-label="${t(ctx.locale,"common.copied")}"><span data-copy-label>${t(ctx.locale,"support.copyDownload")}</span></button>
         <button class="btn btn-secondary" type="button" data-copy="${downloads[os]}?downloadSource=npmmirror" data-copied-label="${t(ctx.locale,"common.copied")}"><span data-copy-label>${t(ctx.locale,"support.copyMirrorDownload")}</span></button>
-        <p class="muted">${t(ctx.locale,os === "win" ? "support.downloadHint" : "support.posixDownloadHint",{filename:os === "mac" ? "OpenRemote-Support.command" : "OpenRemote-Support.sh"})}</p>
+        <p class="muted">${t(ctx.locale,os === "win" ? "support.downloadHint" : "support.posixDownloadHint",{filename:support.filename})}</p>
       </section>`)}
         <p><a href="${url}">${t(ctx.locale,"support.viewInstructions")}</a></p>` : null}
       <p class="muted" style="margin-top:16px">${t(ctx.locale,"support.inviteExpiry")}: ${formatDateTime(ctx.locale,session.inviteExpiresAt)}</p>
@@ -63,11 +64,25 @@ export function renderSupportCreated(ctx: ShellContext, invite: string, session:
   return appDocument({ctx,title:t(ctx.locale,"support.created"),body});
 }
 
-export function renderCustomerSupport(locale: Locale, baseUrl: URL, invite: string,
-  label: string, expiresAt: number, installCommand?: string, downloadSource: DownloadSource = "official", downloadUrl?: string, os: InstallerOS = "win"): string {
-  const system = systems.find(s => s.os === os)!;
+export interface CustomerSupportOptions {
+  locale: Locale;
+  baseUrl: URL;
+  invite: string;
+  label: string;
+  expiresAt: number;
+  installCommand?: string | undefined;
+  downloadSource?: DownloadSource | undefined;
+  downloadUrl?: string | undefined;
+  os?: InstallerOS | undefined;
+}
+
+export function renderCustomerSupport({
+  locale, baseUrl, invite, label, expiresAt, installCommand,
+  downloadSource = "official", downloadUrl, os = "win",
+}: CustomerSupportOptions): string {
+  const system = installerPlatforms[os];
   const shell = os === "win" ? "PowerShell" : "Terminal / Bash";
-  const filename = os === "mac" ? "OpenRemote-Support.command" : "OpenRemote-Support.sh";
+  const filename = system.support.filename;
   const command = installCommand ??
     `pnpm --filter @open-desktop-remote/agent start -- agent support --server ${baseUrl.origin} --invite ${invite}`;
   const body: SafeHtml = html`<section class="solo-card card">

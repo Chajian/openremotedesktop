@@ -1,19 +1,14 @@
 import { installerInstructions, supportsAgentSupport, type DownloadSource, type InstallerOS } from "../dashboard/installer.js";
 import { windowsCmdLauncher } from "../dashboard/windows-launcher.js";
+import { installerPlatforms } from "../dashboard/platforms.js";
 
 export function supportsDownloadedLauncher(version: string | undefined): boolean {
   return supportsAgentSupport(version, true);
 }
 
-export const supportFiles = {
-  win: {route:"windows.cmd", filename:"OpenRemote-Support.cmd"},
-  mac: {route:"macos.command", filename:"OpenRemote-Support.command"},
-  linux: {route:"linux.sh", filename:"OpenRemote-Support.sh"},
-} as const;
-
 export function supportDownloadUrl(origin: URL, invite: string, source: DownloadSource = "official", os: InstallerOS = "win"): string {
   if (!/^[A-Za-z0-9_-]{32}$/.test(invite)) throw new TypeError("Invalid support invite");
-  const url = new URL(`/support/invite/${invite}/${supportFiles[os].route}`, origin);
+  const url = new URL(`/support/invite/${invite}/${installerPlatforms[os].support.route}`, origin);
   if (source === "npmmirror") url.searchParams.set("downloadSource", source);
   return url.toString();
 }
