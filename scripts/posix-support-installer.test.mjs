@@ -13,7 +13,8 @@ const releaseVersion = JSON.parse(readFileSync(join(root, 'apps/agent/src/versio
 
 function fixture(t, platform, { custom = false, xdg = false, version = releaseVersion } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'odr-posix-support-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const cleanup = () => rmSync(directory, { recursive: true, force: true });
+  t.after(cleanup);
   const home = join(directory, 'home with spaces');
   const data = xdg ? join(directory, 'xdg data') : join(home, '.local/share');
   const base = platform === 'macos' ? join(home, 'Library/Application Support') : data;
@@ -27,7 +28,7 @@ function fixture(t, platform, { custom = false, xdg = false, version = releaseVe
   const env = { ...process.env, HOME: home, XDG_DATA_HOME: xdg ? data : '', PATH: tools + ':' + process.env.PATH,
     ODR_TEST_DIR: directory, ODR_TEST_EXIT: '0' };
   const args = [join(root, `scripts/install-${platform}.sh`), '--server', server, ...(custom ? ['--install-dir', install] : [])];
-  return { directory, home, install, env, args, seed() {
+  return { directory, home, install, env, args, cleanup, seed() {
     const runtime = join(install, 'runtime');
     mkdirSync(join(runtime, 'bin'), { recursive: true });
     copyFileSync(process.execPath, join(runtime, 'bin/node'));
@@ -40,7 +41,7 @@ function fixture(t, platform, { custom = false, xdg = false, version = releaseVe
       import { writeFileSync } from 'node:fs';
       writeFileSync(process.env.ODR_TEST_DIR + '/arguments.json', JSON.stringify(process.argv.slice(2)));
       if (process.env.ODR_TEST_WAIT === '1') {
-        process.on('SIGINT', () => process.exit(23));
+        process.on('SIGINT', () => { if (process.env.ODR_TEST_IGNORE_SIGINT !== '1') process.exit(23); });
         setInterval(() => {}, 1000);
         console.log('fixture-ready:' + process.pid);
       } else process.exit(Number(process.env.ODR_TEST_EXIT));
@@ -51,6 +52,78 @@ function fixture(t, platform, { custom = false, xdg = false, version = releaseVe
   }, run(extra = [], overrides = {}) {
     return spawnSync('/bin/bash', [...args, ...extra], { env: { ...env, ...overrides }, encoding: 'utf8', timeout: 20_000 });
   } };
+}
+
+function startSupport(f, overrides = {}) {
+  return spawn('/bin/bash', [...f.args, '--support-invite', invite], {
+    env: { ...f.env, ODR_TEST_WAIT: '1', ...overrides }, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+// Every phase owns and removes its timer/listeners, including early exits and spawn errors.
+function waitForSupport(child, phase, timeoutMs, signal) {
+  return new Promise((resolvePhase, reject) => {
+    let output = '';
+    const finish = (error, result) => {
+      clearTimeout(timer);
+      child.off('error', onError);
+      child.off('close', onClose);
+      child.stdout.off('data', onData);
+      child.stderr.off('data', onData);
+      if (error) reject(error);
+      else resolvePhase(result);
+    };
+    const onError = error => finish(new Error(`${phase} failed: ${error.message}`, { cause: error }));
+    const onClose = (code, exitSignal) => phase === 'startup'
+      ? finish(new Error(`Unexpected early exit ${code}/${exitSignal}: ${output}`))
+      : finish(null, { code, signal: exitSignal });
+    const onData = bytes => {
+      output += bytes;
+      if (phase !== 'startup') return;
+      const match = /fixture-ready:(\d+)/.exec(output);
+      if (!match) return;
+      if (Number(match[1]) !== child.pid) finish(new Error('installer must exec the Agent'));
+      else finish();
+    };
+    const timer = setTimeout(() => finish(new Error(`Timed out after ${timeoutMs}ms waiting for ${phase}: ${output}`)), timeoutMs);
+    child.once('error', onError);
+    child.once('close', onClose);
+    child.stdout.on('data', onData);
+    child.stderr.on('data', onData);
+    if (signal) {
+      try { child.kill(signal); } catch (error) { onError(error); }
+    }
+  });
+}
+
+async function interruptSupport(child, exitTimeoutMs = 5000) {
+  let closed = false;
+  const onClose = () => { closed = true; };
+  child.once('close', onClose);
+  try {
+    await waitForSupport(child, 'startup', 10_000);
+    return await waitForSupport(child, 'SIGINT exit', exitTimeoutMs, 'SIGINT');
+  } finally {
+    try {
+      // close (rather than exit) also waits for the owned stdio handles to close.
+      if (!closed) await waitForSupport(child, 'SIGKILL cleanup', 2000, 'SIGKILL');
+    } finally {
+      child.off('close', onClose);
+      child.stdout.destroy();
+      child.stderr.destroy();
+      child.unref();
+    }
+  }
+}
+
+function assertSupportReaped(child) {
+  assert.throws(() => process.kill(child.pid, 0), { code: 'ESRCH' });
+  assert.equal(child.listenerCount('close'), 0);
+  assert.equal(child.listenerCount('error'), 0);
+  for (const stream of [child.stdout, child.stderr]) {
+    assert.equal(stream.destroyed, true);
+    assert.equal(stream.listenerCount('data'), 0);
+  }
 }
 
 for (const platform of ['macos', 'linux']) {
@@ -99,22 +172,23 @@ for (const platform of ['macos', 'linux']) {
   test(`${platform} foreground support replaces shell and receives SIGINT`, { skip: !posix }, async t => {
     const f = fixture(t, platform);
     f.seed();
-    const child = spawn('/bin/bash', [...f.args, '--support-invite', invite], { env: { ...f.env, ODR_TEST_WAIT: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
-    t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
-    let output = '';
-    await new Promise((resolveReady, reject) => {
-      const timer = setTimeout(() => reject(new Error('Agent fixture did not start: ' + output)), 10_000);
-      child.once('error', reject);
-      child.stdout.on('data', bytes => {
-        output += bytes;
-        const match = /fixture-ready:(\d+)/.exec(output);
-        if (match) { clearTimeout(timer); assert.equal(Number(match[1]), child.pid, 'installer must exec the Agent'); resolveReady(); }
-      });
-      child.stderr.on('data', bytes => { output += bytes; });
-      child.once('exit', code => { clearTimeout(timer); reject(new Error('Unexpected early exit ' + code + ': ' + output)); });
-    });
-    const exited = new Promise(resolveExit => child.once('exit', (code, signal) => resolveExit({ code, signal })));
-    child.kill('SIGINT');
-    assert.deepEqual(await exited, { code: 23, signal: null });
+    const child = startSupport(f);
+    assert.deepEqual(await interruptSupport(child), { code: 23, signal: null });
+    assertSupportReaped(child);
+  });
+
+  test(`${platform} ignored SIGINT rejects within its deadline and cleans up`, { skip: !posix }, async t => {
+    const f = fixture(t, platform);
+    f.seed();
+    const child = startSupport(f, { ODR_TEST_IGNORE_SIGINT: '1' });
+    try {
+      await assert.rejects(interruptSupport(child, 100), /Timed out after 100ms waiting for SIGINT exit/);
+      assert.equal(child.exitCode, null);
+      assert.equal(child.signalCode, 'SIGKILL', 'forced cleanup is not successful SIGINT exit');
+      assertSupportReaped(child);
+    } finally {
+      f.cleanup();
+    }
+    assert.equal(existsSync(f.directory), false);
   });
 }
