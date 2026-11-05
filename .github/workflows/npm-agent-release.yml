@@ -11,6 +11,11 @@ on:
       - 'scripts/verify-agent-release.mjs'
       - 'scripts/check-agent-publication*'
       - 'scripts/prepare-github-release.mjs'
+      - 'scripts/generate-posix-installers.mjs'
+      - 'scripts/install-*'
+      - 'scripts/posix-installer-generation.test.mjs'
+      - 'scripts/installer-release.test.mjs'
+      - 'scripts/set-agent-version.mjs'
       - 'scripts/smoke-packaged-agent.mjs'
       - 'scripts/smoke-packaged-agent-runtime.mjs'
       - 'scripts/fixtures/packaged-agent-preload.mjs'
@@ -228,4 +233,4 @@ jobs:
             --verify-tag \
             --title "OpenRemoteDesktop Agent ${RELEASE_TAG#agent-v}" \
             --generate-notes \
-            --notes "Includes the npm tarball, Windows/macOS installers, SHA256 checksums, and setup instructions. npm installation may require separate human approval of the staged npm version."
+            --notes "Includes the npm tarball, Windows/macOS/Linux installers, SHA256 checksums, and setup instructions. npm installation may require separate human approval of the staged npm version."

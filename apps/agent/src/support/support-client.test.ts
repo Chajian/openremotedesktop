@@ -17,16 +17,17 @@ function fixture() {
 }
 
 describe("customer support agent",()=>{
-  it("explicit launcher acceptance shows permissions, skips typing, and still revokes", async () => {
+  it.each(["win32", "darwin", "linux"])("%s explicit launcher acceptance shows permissions, skips typing, and still revokes", async (platform) => {
     const client = fixture();
     const controller = new AbortController();
     const consent = vi.fn(async () => false);
     const output = vi.spyOn(console, "log").mockImplementation(() => undefined);
     try {
       await runSupportConnect(new URL("https://remote.example.com"), "x".repeat(32), controller.signal,
-        {client, acceptSupport: true, consent, runAgent: async () => { controller.abort(); }});
+        {client, platform, acceptSupport: true, consent, runAgent: async () => { controller.abort(); }});
       expect(consent).not.toHaveBeenCalled();
       expect(client.joinSupport).toHaveBeenCalledOnce();
+      expect(client.joinSupport).toHaveBeenCalledWith("x".repeat(32),expect.any(String),platform,controller.signal);
       expect(client.stopSupport).toHaveBeenCalledOnce();
       expect(output.mock.calls.flat().join("\n")).toContain("read and modify files");
       expect(output.mock.calls.flat().join("\n")).toContain("Ctrl+C");
@@ -75,33 +76,37 @@ describe("customer support agent",()=>{
     } finally { output.mockRestore(); errors.mockRestore(); }
   });
 
-  it("requires local approval before using the invite",async()=>{
+  it.each(["win32", "darwin", "linux"])("%s requires local approval before using the invite",async(platform)=>{
     const client=fixture();
     await expect(runSupportConnect(new URL("https://remote.example.com"),"i".repeat(32),
-      new AbortController().signal,{client,consent:async()=>false})).rejects.toThrow(/declined/);
+      new AbortController().signal,{client,platform,consent:async()=>false})).rejects.toThrow(/declined/);
     expect(client.joinSupport).not.toHaveBeenCalled();
     expect(client.stopSupport).not.toHaveBeenCalled();
   });
 
-  it("runs with only in-memory credentials and revokes on customer Ctrl+C",async()=>{
+  it.each(["win32", "darwin", "linux"])("%s runs with only in-memory credentials and revokes on customer Ctrl+C",async(platform)=>{
     const client=fixture();
     const controller=new AbortController();
     const runAgent=vi.fn(async(_url:URL,_signal:AbortSignal,options:AgentConnectOptions={})=>{
       expect(options.store).toBeDefined();
       await expect(options.store!.get()).rejects.toThrow(/cannot read/);
       await expect(options.store!.set({serverUrl:"",deviceId:"",refreshCredential:""})).rejects.toThrow(/persist/);
+      await expect(options.store!.clear()).rejects.toThrow(/modify/);
       expect(options.ensureCredential).toBeDefined();
       const credential=await options.ensureCredential!(new URL("https://remote.example.com"),
         options.store!,{showVerification(){}});
       expect(credential).toMatchObject({deviceId:"11111111-1111-4111-8111-111111111111",refreshCredential:"r".repeat(43)});
       controller.abort();
     });
+    const consent = vi.fn(async () => true);
     await runSupportConnect(new URL("https://remote.example.com"),"i".repeat(32),
       controller.signal,{
-        client,consent:async()=>true,runAgent,
-        deviceName:"Customer Windows",platform:"win32",
+        client,consent,runAgent,
+        deviceName:"Customer Computer",platform,
       });
-    expect(client.joinSupport).toHaveBeenCalledWith("i".repeat(32),"Customer Windows","win32",expect.anything());
+    expect(consent).toHaveBeenCalledWith(expect.objectContaining({access:"full"}),controller.signal);
+    expect(consent.mock.invocationCallOrder[0]).toBeLessThan(client.joinSupport.mock.invocationCallOrder[0]!);
+    expect(client.joinSupport).toHaveBeenCalledWith("i".repeat(32),"Customer Computer",platform,controller.signal);
     expect(client.stopSupport).toHaveBeenCalledWith("r".repeat(43));
     expect(runAgent).toHaveBeenCalledTimes(1);
   });
@@ -114,12 +119,25 @@ describe("customer support agent",()=>{
     expect(client.stopSupport).not.toHaveBeenCalled();
   });
 
-  it("fails closed when the request is already cancelled",async()=>{
+  it.each(["win32", "darwin", "linux"])("%s revokes independently when the runtime rejects cancellation", async (platform) => {
+    const client = fixture();
+    const controller = new AbortController();
+    const cancelled = new Error("Customer cancelled");
+    await expect(runSupportConnect(new URL("https://remote.example.com"), "i".repeat(32),
+      controller.signal, {client, platform, consent:async()=>true, runAgent:async()=>{
+        controller.abort(cancelled);
+        throw cancelled;
+      }})).rejects.toBe(cancelled);
+    // The revoke request must not inherit the already-aborted runtime signal.
+    expect(client.stopSupport).toHaveBeenCalledExactlyOnceWith("r".repeat(43));
+  });
+
+  it.each(["win32", "darwin", "linux"])("%s fails closed when the request is already cancelled",async(platform)=>{
     const client=fixture();
     const controller=new AbortController();
     controller.abort();
     await expect(runSupportConnect(new URL("https://remote.example.com"),"i".repeat(32),
-      controller.signal,{client,consent:async()=>true})).rejects.toBeDefined();
+      controller.signal,{client,platform,consent:async()=>true})).rejects.toBeDefined();
     expect(client.supportPreview).not.toHaveBeenCalled();
   });
 });

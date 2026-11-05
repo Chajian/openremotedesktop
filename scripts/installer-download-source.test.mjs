@@ -9,9 +9,10 @@ import test from 'node:test';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const windows = process.platform === 'win32';
+const unixInstaller = process.platform === 'linux' ? 'install-linux.sh' : 'install-macos.sh';
 const payload = Buffer.from('verified fixture package bytes');
 const integrity = 'sha512-' + createHash('sha512').update(payload).digest('base64');
-const nodeArchive = `node-v24.9.0-${windows ? 'win' : 'darwin'}-${process.arch}.${windows ? 'zip' : 'tar.gz'}`;
+const nodeArchive = `node-v24.9.0-${windows ? 'win' : process.platform}-${process.arch}.${windows ? 'zip' : 'tar.gz'}`;
 const nodeSums = createHash('sha256').update(payload).digest('hex') + '  ' + nodeArchive + '\n';
 
 function fixture(t, mode) {
@@ -89,12 +90,6 @@ if ($failure) { Write-Error $failure; exit 1 }
   } else {
     const tools = join(directory, 'tools');
     mkdirSync(tools);
-    // Minimal Linux images may omit Perl's shasum. Delegate to the real system
-    // SHA256 verifier; macOS and CI hosts with shasum exercise it directly.
-    if (spawnSync('shasum', ['--version']).error?.code === 'ENOENT') {
-      assert.equal(spawnSync('sha256sum', ['--version']).status, 0, 'A real SHA256 verifier is required');
-      writeFileSync(join(tools, 'shasum'), '#!/bin/sh\nexec sha256sum -c -\n', { mode: 0o755 });
-    }
     writeFileSync(join(tools, 'curl'), `#!${process.execPath}
 const fs = require('node:fs'), path = require('node:path');
 const args = process.argv.slice(2), dir = process.env.ODR_DOWNLOAD_TEST, mode = process.env.ODR_DOWNLOAD_MODE;
@@ -124,10 +119,10 @@ fs.cpSync(path.join(dir, 'runtime-seed'), path.join(args[args.indexOf('-C') + 1]
 `, { mode: 0o755 });
     env.PATH = tools + ':' + env.PATH;
     command = '/bin/bash';
-    args = [join(root, 'scripts/install-macos.sh'), '--server', 'https://remote.example.test', '--install-dir', install, '--install-only'];
+    args = [join(root, 'scripts', unixInstaller), '--server', 'https://remote.example.test', '--install-dir', install, '--install-only'];
   }
-  return { directory, run(source = 'npmmirror', packageSource = 'open-desktop-remote-agent@0.1.4') {
-    const result = spawnSync(command, [...args, ...(windows ? ['-Source', source, '-Package', packageSource] : ['--download-source', source, '--package', packageSource])], { env, encoding: 'utf8', timeout: 60_000 });
+  return { directory, run(source = 'npmmirror', packageSource = 'open-desktop-remote-agent@0.1.4', extraArgs = []) {
+    const result = spawnSync(command, [...args, ...(windows ? ['-Source', source, '-Package', packageSource] : ['--download-source', source, '--package', packageSource]), ...extraArgs], { env, encoding: 'utf8', timeout: 60_000 });
     const calls = existsSync(join(directory, 'npm.jsonl')) ? readFileSync(join(directory, 'npm.jsonl'), 'utf8').trim().split('\n').map(JSON.parse) : [];
     const requests = existsSync(join(directory, 'requests.txt')) ? readFileSync(join(directory, 'requests.txt'), 'utf8') : '';
     return { ...result, calls, requests };
@@ -150,6 +145,18 @@ for (const mode of ['mirror', 'mirror-missing', 'corrupt', 'metadata-unavailable
     }
     if (mode === 'corrupt') assert(!result.requests.includes('https://registry.npmjs.org/open-desktop-remote-agent/-/'), 'integrity mismatch must not downgrade');
     if (mode === 'mirror-missing') assert(result.requests.includes('https://registry.npmjs.org/open-desktop-remote-agent/-/'));
+  });
+}
+
+for (const mode of ['mirror', 'mirror-missing', 'corrupt', 'metadata-unavailable', 'bad-name', 'bad-version', 'bad-integrity', 'bad-tarball', 'npm-failure', 'node-mirror', 'node-missing', 'node-corrupt']) {
+  test(`POSIX temporary support retains verified downloads: ${mode}`, { skip: windows }, t => {
+    const result = fixture(t, mode).run('npmmirror', 'open-desktop-remote-agent@0.1.4', ['--support-invite', 'X'.repeat(32)]);
+    const installs = ['mirror', 'mirror-missing', 'npm-failure', 'node-mirror', 'node-missing'].includes(mode);
+    const succeeds = installs && mode !== 'npm-failure';
+    assert.equal(result.status === 0, succeeds, result.stdout + result.stderr);
+    assert.equal(result.calls.length, installs ? 1 : 0, 'support must use the same verified single install path');
+    if (mode === 'mirror-missing') assert(result.requests.includes('https://registry.npmjs.org/open-desktop-remote-agent/-/'));
+    if (mode === 'corrupt') assert(!result.requests.includes('https://registry.npmjs.org/open-desktop-remote-agent/-/'));
   });
 }
 

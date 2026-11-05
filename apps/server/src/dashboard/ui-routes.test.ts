@@ -103,6 +103,11 @@ describe("dual-domain production dashboard", () => {
     const mac = await app.inject({ url: "/dashboard/connect?step=2&os=mac", headers });
     expect(mac.body).toContain(`${origin}/install/macos.sh`);
     expect(mac.body).toContain(`--server &#39;${origin}&#39;`);
+    const linux = await app.inject({ url: "/dashboard/connect?step=2&os=linux", headers });
+    expect(linux.statusCode).toBe(200);
+    expect(linux.body).toContain(`${origin}/install/linux.sh`);
+    expect(linux.body).toContain(`--server &#39;${origin}&#39;`);
+    expect(linux.body).not.toContain("spoof.example.com");
     const pairing = (await app.inject({ method: "POST", url: "/api/device-pairings", headers })).json();
     expect(pairing.verificationUri).toBe(`${origin}/device`);
     // Exercise the Agent's actual same-origin guard without changing its policy.

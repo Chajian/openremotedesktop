@@ -279,16 +279,17 @@ describe("one-command onboarding", () => {
     const { cookie } = await login();
     expect((await app.inject({ url: "/install/windows.ps1" })).statusCode).toBe(404);
     expect((await app.inject({ url: "/install/macos.sh" })).statusCode).toBe(404);
+    expect((await app.inject({ url: "/install/linux.sh" })).statusCode).toBe(404);
     const page = await app.inject({ url: "/dashboard/connect?step=2&os=win", headers: { cookie } });
     expect(page.statusCode).toBe(200);
     expect(page.body).toContain("一键安装尚未启用");
     expect(page.body).not.toContain("Installer checksum mismatch");
   });
 
-  it("serves hash-pinned Windows and macOS scripts from the configured HTTPS origin", async () => {
+  it("serves hash-pinned Windows, macOS and Linux scripts from the configured HTTPS origin", async () => {
     const { app, login } = await fixture(true);
     const { cookie } = await login();
-    for (const [os, endpoint] of [["win", "/install/windows.ps1"], ["mac", "/install/macos.sh"]] as const) {
+    for (const [os, endpoint] of [["win", "/install/windows.ps1"], ["mac", "/install/macos.sh"], ["linux", "/install/linux.sh"]] as const) {
       const script = await app.inject({ url: endpoint });
       expect(script.statusCode).toBe(200);
       expect(script.headers["cache-control"]).toBe("no-store");

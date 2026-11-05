@@ -116,13 +116,13 @@ Never restore a database backup over newer legitimate authorization changes.
 ## Temporary remote support (feature-gated pilot)
 
 `ODR_SUPPORT_ENABLED` defaults to `false`. The pilot requires a
-compatible Windows Agent; the existing published 0.1.3 client does not
+compatible Windows, macOS or Linux Agent; the 0.1.3 client does not
 automatically support `agent support`. Do not enable customer invitations
 until the matching Agent distribution has been built and verified.
 
 When a verified compatible npm Agent version is configured with
-\`ODR_SUPPORT_AGENT_VERSION\` and the official installer is enabled, the customer
-page offers a checksum-pinned HTTPS PowerShell installer. Otherwise it labels
+`ODR_SUPPORT_AGENT_VERSION` and the installer is enabled, the customer
+page offers a checksum-pinned HTTPS PowerShell or Bash installer. Otherwise it labels
 the source-checkout command as developer-only. The original published Agent
 version must not be misrepresented as supporting this command.
 
@@ -130,6 +130,11 @@ An authenticated account owner creates a session. The one-time invitation is
 192 bits of randomness, stored only as its SHA-256 hash, expires after five
 minutes, and can be redeemed once without customer account creation. The
 customer's Agent must explicitly approve full tool access before redeeming it.
+Manual commands require `YES`. Downloaded launchers require Agent 0.1.6 or newer
+and pass `--accept-support`: running the file is the explicit consent action,
+explained on the page and in the terminal. Merely viewing or downloading an
+invitation never redeems it. All three platforms offer official or npmmirror
+downloads with the same installer and package verification rules.
 Once joined, the temporary device inherits the creator account's authorized
 MCP clients, including multiple AI clients; it does not bypass the platform's
 own consent prompts.
@@ -158,8 +163,9 @@ The server remains a trusted component and can read command contents, as in
 ordinary device mode. No GUI automation guarantee is implied by Desktop
 Commander tools. Invitation URLs must not be sent to analytics or third-party
 resources; customer pages use no-referrer and no-store headers. A customer
-installation distribution and signed Windows binary are still release gates,
-not proven by automated mocks or source-checkout tests.
+installation distribution, actual startup, READY and confirmed revocation on
+each supported platform are still release gates, not proven by automated mocks
+or source-checkout tests. Downloaded scripts do not bypass OS security prompts.
 
 ## Ambiguous execution
 

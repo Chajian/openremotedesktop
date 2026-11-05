@@ -91,10 +91,13 @@ export class SupportService {
   join(invite: string, deviceName: string, platform: string): {
     deviceId: string; refreshCredential: string; sessionId: string;
   } {
-    if (platform !== "win32") throw new TypeError("Windows only in first release");
+    if (platform !== "win32" && platform !== "darwin" && platform !== "linux") {
+      throw new TypeError("Unsupported support platform");
+    }
     return this.db.transaction(() => {
       const row = this.byInvite(invite);
-      const name = deviceName.trim().slice(0, 80) || "Customer Windows";
+      const platformName = platform === "win32" ? "Windows" : platform === "darwin" ? "macOS" : "Linux";
+      const name = deviceName.trim().slice(0, 80) || `Customer ${platformName}`;
       const device = this.devices.create(name, row.owner_id);
       const at = this.now();
       const refreshCredential = this.credentials.issue(device.id, at);

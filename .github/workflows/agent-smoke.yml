@@ -42,11 +42,28 @@ jobs:
         run: node --test scripts/installer-runtime-path.test.mjs
       - name: Downloaded support launcher regression
         run: node --test scripts/support-launcher.test.mjs
+      - name: Execute generated support launchers on native POSIX
+        if: runner.os != 'Windows'
+        env:
+          ODR_TEST_REQUIRE_NATIVE_POSIX: "1"
+        run: node --test scripts/posix-support-launcher.test.mjs
       - name: Installer verified mirror and fallback regression
         run: node --test scripts/installer-download-source.test.mjs
-      - name: Validate macOS installer syntax
+      - name: Linux installer prerequisites and failure guards
+        if: runner.os == 'Linux'
+        run: node --test scripts/linux-installer.test.mjs
+      - name: POSIX temporary support consent and shutdown
         if: runner.os != 'Windows'
-        run: bash -n scripts/install-macos.sh
+        run: node --test scripts/posix-support-installer.test.mjs
+      - name: Installer release version and checksums
+        run: |
+          node scripts/generate-posix-installers.mjs --check
+          node --test scripts/posix-installer-generation.test.mjs scripts/installer-release.test.mjs
+      - name: Validate POSIX installer syntax
+        if: runner.os != 'Windows'
+        run: |
+          bash -n scripts/install-macos.sh
+          bash -n scripts/install-linux.sh
       - name: Validate Windows installer syntax
         if: runner.os == 'Windows'
         shell: pwsh

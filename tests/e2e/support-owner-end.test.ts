@@ -10,8 +10,11 @@ function csrf(html: string): string {
   return token;
 }
 
-describe("support owner end over actual Agent and Relay", () => {
-  it("treats an authorized creator's close as normal after READY", async () => {
+describe("support end over actual Agent and Relay", () => {
+  it.each([
+    ["win32", "owner"], ["darwin", "owner"], ["linux", "owner"],
+    ["win32", "customer"], ["darwin", "customer"], ["linux", "customer"],
+  ])("ends a %s join by %s after READY and shuts down the executor", async (platform, reason) => {
     const server = await startTestServer({ supportEnabled: true });
     const controller = new AbortController();
     let closes = 0;
@@ -41,7 +44,7 @@ describe("support owner end over actual Agent and Relay", () => {
       // support orchestrator, runtime, Relay, HTTP and WebSocket are real.
       running = runSupportConnect(server.baseUrl, invite, controller.signal, {
         consent: async () => true,
-        deviceName: "Customer Windows", platform: "win32",
+        deviceName: "Customer Computer", platform,
         runAgent: (url, signal, options) => runAgentConnect(url, signal, {
           ...options, createExecutor,
         }),
@@ -50,14 +53,18 @@ describe("support owner end over actual Agent and Relay", () => {
       await waitFor(() => server.relayRegistry.snapshot().some(s => s.state === "READY"), 15_000);
       const record = server.db.prepare("SELECT id, device_id AS deviceId FROM support_sessions")
         .get() as { id: string; deviceId: string };
-      const confirm = await fetch(new URL(`/dashboard/support/${record.id}/end`, server.baseUrl),
-        { headers: { cookie } });
-      const ended = await fetch(new URL(`/dashboard/support/${record.id}/end`, server.baseUrl), {
-        method: "POST", redirect: "manual",
-        headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ csrf: csrf(await confirm.text()) }),
-      });
-      expect(ended.status).toBe(303);
+      if (reason === "owner") {
+        const confirm = await fetch(new URL(`/dashboard/support/${record.id}/end`, server.baseUrl),
+          { headers: { cookie } });
+        const ended = await fetch(new URL(`/dashboard/support/${record.id}/end`, server.baseUrl), {
+          method: "POST", redirect: "manual",
+          headers: { cookie, "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ csrf: csrf(await confirm.text()) }),
+        });
+        expect(ended.status).toBe(303);
+      } else {
+        controller.abort();
+      }
       const result = await Promise.race([
         outcome,
         new Promise<Error>(resolve => setTimeout(
@@ -66,7 +73,9 @@ describe("support owner end over actual Agent and Relay", () => {
       expect(result).toBe("completed");
       expect(closes).toBe(1);
       expect(server.db.prepare("SELECT ended_reason AS reason FROM support_sessions WHERE id=?")
-        .get(record.id)).toEqual({ reason: "owner" });
+        .get(record.id)).toEqual({ reason });
+      expect(server.db.prepare("SELECT COUNT(*) AS n FROM device_credentials WHERE device_id=? AND revoked_at IS NULL")
+        .get(record.deviceId)).toEqual({n:0});
       expect(server.relayRegistry.get(record.deviceId)).toBeUndefined();
     } finally {
       controller.abort();

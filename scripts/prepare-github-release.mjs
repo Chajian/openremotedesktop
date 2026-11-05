@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { generatePosixInstallers } from "./generate-posix-installers.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const tag = process.argv[2];
@@ -12,6 +13,7 @@ const pkg = JSON.parse(await readFile(join(root, "dist/agent-npm/package.json"),
 if (pkg.name !== "open-desktop-remote-agent" || pkg.version !== version) {
   throw new Error("Git tag does not match the built npm Agent package");
 }
+await generatePosixInstallers(root, { check: true });
 
 const assetDir = join(root, "dist/github-release");
 await rm(assetDir, { recursive: true, force: true });
@@ -20,6 +22,7 @@ const files = [
   ["dist/open-desktop-remote-agent-" + version + ".tgz", "open-desktop-remote-agent-" + version + ".tgz"],
   ["scripts/install-windows.ps1", "install-windows.ps1"],
   ["scripts/install-macos.sh", "install-macos.sh"],
+  ["scripts/install-linux.sh", "install-linux.sh"],
 ];
 for (const [relative, filename] of files) {
   const source = join(root, relative);
@@ -41,6 +44,7 @@ const instructions = [
   "- open-desktop-remote-agent-" + version + ".tgz: npm package for all supported OSes.",
   "- install-windows.ps1: Windows user-level bootstrap script.",
   "- install-macos.sh: macOS user-level bootstrap script.",
+  "- install-linux.sh: Linux x64/ARM64 glibc user-level bootstrap script.",
   "- SHA256SUMS.txt: checksums for the files in this release.",
   "",
   "The installers download Node.js 24 and install the exact Agent version from npm.",
@@ -50,6 +54,7 @@ const instructions = [
   "After npm approval:",
   "Windows PowerShell: .\\install-windows.ps1 -Server https://your-server.example",
   "macOS Terminal: bash ./install-macos.sh --server https://your-server.example",
+  "Linux Terminal: bash ./install-linux.sh --server https://your-server.example",
   "",
   "Inspect scripts before running them. Approve each device on your own server.",
   "The Agent runs with your account's file/terminal permissions.",

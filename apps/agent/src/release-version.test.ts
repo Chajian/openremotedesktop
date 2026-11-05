@@ -11,9 +11,12 @@ const root = fileURLToPath(new URL("../../../", import.meta.url));
 const releasePath = "apps/agent/src/version.json";
 const targets = [
   "scripts/set-agent-version.mjs",
+  "scripts/generate-posix-installers.mjs",
+  "scripts/install-posix.template.sh",
   "scripts/build-agent-package.mjs",
   "scripts/install-windows.ps1",
   "scripts/install-macos.sh",
+  "scripts/install-linux.sh",
   "apps/server/src/dashboard/installer.ts",
 ];
 
@@ -31,7 +34,7 @@ it("builds the same Agent and upstream versions advertised by the installers and
     .toBe(adapter.dependencies["@wonderwhy-er/desktop-commander"]);
   expect(pkg.dependencies["@wonderwhy-er/desktop-commander"])
     .toBe(DESKTOP_COMMANDER_VERSION);
-  for (const relative of ["scripts/install-windows.ps1", "scripts/install-macos.sh"]) {
+  for (const relative of ["scripts/install-windows.ps1", "scripts/install-macos.sh", "scripts/install-linux.sh"]) {
     const installer = readFileSync(join(root, relative), "utf8");
     expect(installer.match(/open-desktop-remote-agent@(\d+\.\d+\.\d+)/)?.[1])
       .toBe(pkg.version);
@@ -63,7 +66,7 @@ it("bumps the Agent release metadata and installer targets together", () => {
     expect(JSON.parse(readFileSync(join(fixture, releasePath), "utf8"))).toEqual({
       version: "9.8.7",
     });
-    for (const relative of ["scripts/install-windows.ps1", "scripts/install-macos.sh"]) {
+    for (const relative of ["scripts/install-windows.ps1", "scripts/install-macos.sh", "scripts/install-linux.sh"]) {
       expect(readFileSync(join(fixture, relative), "utf8"))
         .toContain("open-desktop-remote-agent@9.8.7");
     }

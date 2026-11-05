@@ -24,7 +24,7 @@ describe("standalone Add Device wizard", () => {
     expect(html).not.toContain("Team & Sharing");
   });
 
-  for (const [os, endpoint] of [["win", "/install/windows.ps1"], ["mac", "/install/macos.sh"]] as const) {
+  for (const [os, endpoint] of [["win", "/install/windows.ps1"], ["mac", "/install/macos.sh"], ["linux", "/install/linux.sh"]] as const) {
     it("uses pinned " + os + " installer in step 2 with a real copy target", () => {
       const html = page({ os, step: 2 });
       const command = installerInstructions(os, url);
@@ -38,13 +38,26 @@ describe("standalone Add Device wizard", () => {
     });
   }
 
-  it("keeps Windows/macOS installation closed until published, without hiding Linux documentation", () => {
-    const blocked = page({ step: 2, enabled: false });
+  it.each(["win", "mac", "linux"] as const)("keeps %s installation closed until enabled", (os) => {
+    const blocked = page({ os, step: 2, enabled: false });
     expect(blocked).toContain("一键安装尚未启用");
     expect(blocked).not.toContain('data-copy="install-command"');
-    const linux = page({ os: "linux", step: 2, enabled: false });
-    expect(linux).toContain("Agent 文档");
-    expect(linux).not.toContain("一键安装尚未启用");
+    expect(blocked).not.toContain("step=3");
+  });
+
+  it("explains Linux prerequisites and pairing without a local browser", () => {
+    const html = page({ os: "linux", step: 2 });
+    expect(html).toContain("x64 / ARM64");
+    expect(html).toContain("glibc");
+    expect(html).toContain("curl");
+    expect(html).toContain("另一台电脑或手机");
+    expect(html).toContain("SSH");
+    expect(html).not.toContain("高级安装");
+    expect(html).not.toContain("macOS 上的终端");
+    const command = installerInstructions("linux", url).command;
+    expect(command).toContain("sha256sum -c -");
+    expect(command).not.toContain("shasum");
+    expect(command.indexOf("sha256sum")).toBeLessThan(command.indexOf('bash "$f"'));
   });
 
   it("offers optional acceleration without changing the script origin or losing the selection", () => {
@@ -56,6 +69,10 @@ describe("standalone Add Device wizard", () => {
     expect(accelerated).toContain("https://remote.example.com/install/windows.ps1");
     expect(accelerated).toContain("step=3&os=win&downloadSource=npmmirror");
     expect(page({ os: "mac", step: 2, downloadSource: "npmmirror" })).toContain("--download-source");
+    const linux = page({ os: "linux", step: 2, downloadSource: "npmmirror" });
+    expect(linux).toContain("--download-source");
+    expect(linux).toContain("https://remote.example.com/install/linux.sh");
+    expect(linux).toContain("step=3&os=linux&downloadSource=npmmirror");
     expect(page({ step: 2, enabled: false, downloadSource: "npmmirror" })).not.toContain("-DownloadSource");
   });
 
