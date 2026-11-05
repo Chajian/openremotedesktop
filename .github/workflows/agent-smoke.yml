@@ -51,7 +51,9 @@ jobs:
         if: runner.os != 'Windows'
         run: node --test scripts/posix-support-installer.test.mjs
       - name: Installer release version and checksums
-        run: node --test scripts/installer-release.test.mjs
+        run: |
+          node scripts/generate-posix-installers.mjs --check
+          node --test scripts/posix-installer-generation.test.mjs scripts/installer-release.test.mjs
       - name: Validate POSIX installer syntax
         if: runner.os != 'Windows'
         run: |

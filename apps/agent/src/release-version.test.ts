@@ -11,6 +11,8 @@ const root = fileURLToPath(new URL("../../../", import.meta.url));
 const releasePath = "apps/agent/src/version.json";
 const targets = [
   "scripts/set-agent-version.mjs",
+  "scripts/generate-posix-installers.mjs",
+  "scripts/install-posix.template.sh",
   "scripts/build-agent-package.mjs",
   "scripts/install-windows.ps1",
   "scripts/install-macos.sh",

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { generatePosixInstallers } from "./generate-posix-installers.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const tag = process.argv[2];
@@ -12,6 +13,7 @@ const pkg = JSON.parse(await readFile(join(root, "dist/agent-npm/package.json"),
 if (pkg.name !== "open-desktop-remote-agent" || pkg.version !== version) {
   throw new Error("Git tag does not match the built npm Agent package");
 }
+await generatePosixInstallers(root, { check: true });
 
 const assetDir = join(root, "dist/github-release");
 await rm(assetDir, { recursive: true, force: true });
