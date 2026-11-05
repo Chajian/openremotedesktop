@@ -17,7 +17,7 @@ describe("support history device link", () => {
   it("shows download choices only with the released installer, without adding a login", () => {
     const accelerated = renderCustomerSupport("en", ctx.publicBaseUrl, "X".repeat(32), "Customer", 301000, "verified-command", "npmmirror");
     expect(accelerated).toContain("China acceleration");
-    expect(accelerated).toContain("?downloadSource=npmmirror");
+    expect(accelerated).toContain("?os=win&amp;downloadSource=npmmirror");
     expect(accelerated).toContain("verified-command");
     expect(accelerated).not.toContain("/dashboard/login");
     expect(renderCustomerSupport("en", ctx.publicBaseUrl, "X".repeat(32), "Customer", 301000)).not.toContain("China acceleration");

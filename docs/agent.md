@@ -2,7 +2,21 @@
 
 The Agent is the workstation-side process. It creates an outbound relay connection and bridges remote calls to a local Desktop Commander stdio process.
 
-## Requirements
+## One-command installation
+
+When installation is enabled on your Server, open **Add device**, select Windows,
+macOS or Linux, and copy the displayed checksum-pinned command. It installs a
+private Node.js runtime and the pinned Agent release, then starts pairing.
+
+Linux supports x64/ARM64 with glibc 2.28+ and a Node.js 24-compatible OS;
+Alpine/musl is not supported by the installer. Bash, curl, tar/gzip, sha256sum,
+getconf and standard GNU utilities must be available. No preinstalled Node.js,
+Git, pnpm or sudo is needed. On headless machines, open the printed pairing link
+on another computer or phone and approve the code. Keep the terminal or SSH
+session running; no background service is installed. See
+[Linux installation and options](one-command-onboarding.md#linux-installation).
+
+## Source installation requirements
 
 - Node.js 24+
 - pnpm/Corepack
@@ -38,20 +52,22 @@ After approval the Agent receives a long-lived device refresh credential. It pre
 
 The Server stores only verifier/hash material for the long-lived credential.
 
-## Temporary Windows support
+## Temporary support on Windows, macOS and Linux
 
 `agent support --server https://remote.example.com --invite <invite>` joins a
 temporary support session after interactive `YES` consent. This mode does not use
 ordinary saved pairing credentials. The requester must first create an invitation.
 
-From Agent 0.1.6, the Server can generate a Windows `.cmd` download that embeds the
-invitation and reuses the verified installer. Double-clicking starts support
-without entering a code or `YES`; the launcher explicitly passes `--accept-support`.
+With Agent 0.1.6 or newer configured, the Server can generate Windows `.cmd`,
+macOS `.command` and Linux `.sh` downloads that embed the invitation and reuse the
+verified installer. Double-click the Windows file; on macOS or Linux run the
+downloaded file with Bash as shown on the invitation page. Running it starts
+support without entering a code or `YES`; the launcher passes `--accept-support`.
 That option is accepted only by `agent support`, and keeps the permission notice
 visible. It grants full file/terminal access as the current OS user. Keep the
 foreground window open and press Ctrl+C to end and revoke access. The normal CLI
 continues to prompt when the option is absent. See the
-[downloaded support flow](one-command-onboarding.md#downloaded-windows-temporary-support).
+[downloaded support flow](one-command-onboarding.md#downloaded-temporary-support).
 
 ## Connection lifecycle
 

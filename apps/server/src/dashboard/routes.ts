@@ -148,7 +148,11 @@ export function registerDashboardRoutes(
     return reply.type("text/html; charset=utf-8").send(
       renderSupportCreated(shell(request, auth, "support"), invite, session,
         deps.config.agentInstallEnabled && supportsDownloadedLauncher(deps.config.supportAgentVersion)
-          ? supportDownloadUrl(publicBaseUrlForHost(deps.config, request.headers.host), invite) : undefined));
+          ? {
+            win:supportDownloadUrl(publicBaseUrlForHost(deps.config, request.headers.host), invite),
+            mac:supportDownloadUrl(publicBaseUrlForHost(deps.config, request.headers.host), invite, "official", "mac"),
+            linux:supportDownloadUrl(publicBaseUrlForHost(deps.config, request.headers.host), invite, "official", "linux"),
+          } : undefined));
   });
 
   app.get("/dashboard/support/:sessionId/end", async (request, reply) => {
@@ -277,6 +281,7 @@ export function registerDashboardRoutes(
   for (const [route, os] of [
     ["/install/windows.ps1", "win"],
     ["/install/macos.sh", "mac"],
+    ["/install/linux.sh", "linux"],
   ] as const) {
     app.get(route, async (_request, reply) => {
       if (!deps.config.agentInstallEnabled) return reply.code(404).send();

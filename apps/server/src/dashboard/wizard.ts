@@ -1,7 +1,7 @@
 import { escapeHtml } from "./templates.js";
 import { installerInstructions, downloadSourceFromQuery, type DownloadSource, type InstallerOS } from "./installer.js";
 
-export type AgentOs = InstallerOS | "linux";
+export type AgentOs = InstallerOS;
 export type WizardStep = 1 | 2 | 3;
 export type WizardOptions = { os: AgentOs; step: WizardStep; baseUrl: URL; enabled: boolean; csrf: string; code?: string; downloadSource?: DownloadSource };
 const colors = "--accent:#3355ff;--accent-bg:#eef1ff;--line:#e5e7ec;--gray:#667085;--text:#0e1116";
@@ -43,34 +43,35 @@ export function renderConnectPage(input: WizardOptions): string {
       + ([
         ["win", "⊞", "Windows", "Windows 10 / 11"],
         ["mac", "●", "macOS", "Intel / Apple Silicon"],
-        ["linux", "🐧", "Linux", "高级安装"],
+        ["linux", "🐧", "Linux", "x64 / ARM64 · glibc"],
       ] as const).map(([key, icon, label, detail]) =>
         '<a class="os ' + (os === key ? 'selected' : '') + '" href="' + href(2, key) + '"><span class="os-icon">'
         + icon + '</span><strong>' + label + '</strong><small>' + detail + '</small></a>').join('') + '</div>'
       + '<div class="note"><b>无需事先安装开发工具</b><ul>'
-      + '<li>Windows/macOS 无需 Git、Node.js、pnpm 或 Homebrew。</li>'
+      + '<li>无需预装 Git、Node.js、pnpm 或 Homebrew。</li>'
+      + '<li>Linux 需要 Bash、curl、tar、sha256sum 和 glibc 2.28+，暂不支持 Alpine/musl。</li>'
       + '<li>不会修改全局 PATH，也无需管理员权限。</li>'
       + '<li>电脑需要连接互联网。</li></ul></div>';
     forward = '<a class="btn primary" href="' + href(2, os) + '">下一步 →</a>';
   } else if (step === 2) {
     const name = os === "win" ? "Windows" : os === "mac" ? "macOS" : "Linux";
     body = '<h1>在 ' + name + ' 安装 Agent</h1><p>复制一条命令即可开始安装并连接设备。</p>';
-    if (os === "linux") {
-      body += '<div class="note">Linux 暂时保持高级安装方式。请参阅 '
-        + '<a class="link" href="https://github.com/Chajian/openremotedesktop/blob/master/docs/agent.md">Agent 文档</a>。</div>';
-      forward = '<a class="btn secondary" href="' + href(1, os) + '">返回选择系统</a>';
-    } else if (!enabled) {
+    if (!enabled) {
       body += '<div class="warn"><b>一键安装尚未启用</b><div>必须先通过审核并发布新版 Agent，确认可用后才会开放此入口。</div></div>';
       forward = '<a class="btn secondary" href="' + href(1, os) + '">返回选择系统</a>';
     } else {
       const install = installerInstructions(os, baseUrl, undefined, downloadSource);
+      if (os === "linux") {
+        body += '<div class="note"><b>Linux x64 / ARM64</b><p>需要 glibc 2.28+、Bash、curl、tar 和 sha256sum；暂不支持 Alpine/musl。无需预装 Node.js 或使用 sudo。</p>'
+          + '<p>请保持终端或 SSH 会话运行；关闭会话可能导致设备离线。本次安装不会配置后台服务或开机自启。</p></div>';
+      }
       body += '<div class="note"><b>下载渠道</b><p>'
         + ([['official', '官方源（默认）'], ['npmmirror', '国内加速（npmmirror）']] as const).map(([source, label]) =>
           '<a class="btn ' + (downloadSource === source ? 'primary' : 'secondary') + '" aria-current="'
           + (downloadSource === source ? 'true' : 'false') + '" href="' + wizardHref(2, os, source) + '">' + label + '</a>').join(' ')
         + '</p><span class="small">国内网络下载较慢时可选加速；仍需连接官方源获取校验信息，不修改全局下载设置。</span></div>'
         + '<div class="substep"><span class="num">1</span><div><h3>打开 ' + windowShell(os) + '</h3><p>'
-        + (os === "win" ? '从开始菜单搜索并打开 PowerShell。' : '打开 macOS 上的终端应用。') + '</p></div></div>'
+        + (os === "win" ? '从开始菜单搜索并打开 PowerShell。' : os === "mac" ? '打开 macOS 上的终端应用。' : '打开 Linux 终端，或通过 SSH 登录需要连接的设备。') + '</p></div></div>'
         + '<div class="substep"><span class="num">2</span><div><h3>复制并运行这条命令</h3>'
         + '<p>自动安装环境、Agent，并启动设备配对。</p>'
         + '<div class="term"><div class="termbar"><span>' + windowShell(os) + '</span>'
@@ -82,7 +83,9 @@ export function renderConnectPage(input: WizardOptions): string {
         + '<p class="small" style="overflow-wrap:anywhere">SHA-256：' + install.sha256 + '</p></details></div></div>'
         + '<div class="substep"><span class="num">3</span><div><h3>安装完成后批准设备</h3>'
         + '<div class="note">Agent 将尝试自动打开配对网页并预填一次性代码。你需要亲自确认并批准。'
-        + '如果浏览器未打开，可继续下一步手动输入。</div></div></div>';
+        + '如果浏览器未打开，可继续下一步手动输入。'
+        + (os === "linux" ? '没有桌面或浏览器时，可在另一台电脑或手机上打开终端显示的配对链接，登录同一服务并批准设备。' : '')
+        + '</div></div></div>';
       forward = '<a class="btn primary" href="' + href(3, os) + '">已运行命令，下一步 →</a>';
     }
   } else {

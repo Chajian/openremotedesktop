@@ -3,7 +3,9 @@ import { html, type SafeHtml } from "../ui/html.js";
 import { appDocument, pageHead, hiddenInput, soloDocument, type ShellContext } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
 import { t, type Locale, formatDateTime } from "../ui/i18n.js";
-import type { DownloadSource } from "../installer.js";
+import type { DownloadSource, InstallerOS } from "../installer.js";
+
+const systems = [{os:"win", label:"Windows"}, {os:"mac", label:"macOS"}, {os:"linux", label:"Linux"}] as const;
 
 export function renderSupportDashboard(
   ctx: ShellContext, sessions: SupportSession[],
@@ -38,18 +40,21 @@ export function renderSupportDashboard(
   return appDocument({ctx,title:t(ctx.locale,"support.title"),body});
 }
 
-export function renderSupportCreated(ctx: ShellContext, invite: string, session: SupportSession, downloadUrl?: string): string {
+export function renderSupportCreated(ctx: ShellContext, invite: string, session: SupportSession, downloads?: Record<InstallerOS, string>): string {
   const url = new URL("/support/invite/" + invite, ctx.publicBaseUrl).toString();
-  const sharedUrl = downloadUrl ?? url;
   const body = html`${pageHead({title:t(ctx.locale,"support.created"),lead:session.label})}
     <section class="card card-pad" style="max-width:760px">
-      <p>${t(ctx.locale,downloadUrl ? "support.downloadHint" : "support.inviteHint")}</p>
-      <div class="code"><div class="code-body" style="overflow-wrap:anywhere">${sharedUrl}</div></div>
-      <button class="btn btn-primary" data-copy="${sharedUrl}" data-copied-label="${t(ctx.locale,"common.copied")}" type="button">
-        ${icon("copy",15)}<span data-copy-label>${t(ctx.locale,downloadUrl ? "support.copyDownload" : "support.copyLink")}</span>
+      <p>${t(ctx.locale,"support.inviteHint")}</p>
+      <div class="code"><div class="code-body" style="overflow-wrap:anywhere">${url}</div></div>
+      <button class="btn btn-primary" data-copy="${url}" data-copied-label="${t(ctx.locale,"common.copied")}" type="button">
+        ${icon("copy",15)}<span data-copy-label>${t(ctx.locale,"support.copyLink")}</span>
       </button>
-      ${downloadUrl ? html`<a class="btn btn-secondary" href="${downloadUrl}">${t(ctx.locale,"support.download")}</a>
-        <button class="btn btn-secondary" type="button" data-copy="${downloadUrl}?downloadSource=npmmirror" data-copied-label="${t(ctx.locale,"common.copied")}"><span data-copy-label>${t(ctx.locale,"support.copyMirrorDownload")}</span></button>
+      ${downloads ? html`${systems.map(({os,label}) => html`<section style="margin-top:20px"><h3>${label}</h3>
+        <a class="btn btn-secondary" href="${downloads[os]}">${t(ctx.locale,"support.download",{os:label})}</a>
+        <button class="btn btn-secondary" type="button" data-copy="${downloads[os]}" data-copied-label="${t(ctx.locale,"common.copied")}"><span data-copy-label>${t(ctx.locale,"support.copyDownload")}</span></button>
+        <button class="btn btn-secondary" type="button" data-copy="${downloads[os]}?downloadSource=npmmirror" data-copied-label="${t(ctx.locale,"common.copied")}"><span data-copy-label>${t(ctx.locale,"support.copyMirrorDownload")}</span></button>
+        <p class="muted">${t(ctx.locale,os === "win" ? "support.downloadHint" : "support.posixDownloadHint",{filename:os === "mac" ? "OpenRemote-Support.command" : "OpenRemote-Support.sh"})}</p>
+      </section>`)}
         <p><a href="${url}">${t(ctx.locale,"support.viewInstructions")}</a></p>` : null}
       <p class="muted" style="margin-top:16px">${t(ctx.locale,"support.inviteExpiry")}: ${formatDateTime(ctx.locale,session.inviteExpiresAt)}</p>
       <p class="muted">${t(ctx.locale,"support.noTimeout")}</p>
@@ -59,7 +64,10 @@ export function renderSupportCreated(ctx: ShellContext, invite: string, session:
 }
 
 export function renderCustomerSupport(locale: Locale, baseUrl: URL, invite: string,
-  label: string, expiresAt: number, installCommand?: string, downloadSource: DownloadSource = "official", downloadUrl?: string): string {
+  label: string, expiresAt: number, installCommand?: string, downloadSource: DownloadSource = "official", downloadUrl?: string, os: InstallerOS = "win"): string {
+  const system = systems.find(s => s.os === os)!;
+  const shell = os === "win" ? "PowerShell" : "Terminal / Bash";
+  const filename = os === "mac" ? "OpenRemote-Support.command" : "OpenRemote-Support.sh";
   const command = installCommand ??
     `pnpm --filter @open-desktop-remote/agent start -- agent support --server ${baseUrl.origin} --invite ${invite}`;
   const body: SafeHtml = html`<section class="solo-card card">
@@ -67,19 +75,24 @@ export function renderCustomerSupport(locale: Locale, baseUrl: URL, invite: stri
     <p class="lead">${t(locale,"support.customerLead", {label})}</p>
     <p>${t(locale,"support.customerFullAccess")}</p>
     <p class="muted">${t(locale,"support.inviteExpiry")}: ${formatDateTime(locale,expiresAt)}</p>
-    ${downloadUrl ? null : html`<p class="muted">${t(locale,installCommand ? "support.installerReady" : "support.devOnly")}</p>`}
+    <div class="field"><p>${t(locale,"support.chooseSystem")}</p>${systems.map(s => html`<a
+      class="btn ${s.os === os ? "btn-primary" : "btn-secondary"}"
+      href="?os=${s.os}&amp;downloadSource=${downloadSource}" aria-current="${s.os === os ? "page" : "false"}">${s.label}</a>`)}</div>
+    ${os === "linux" ? html`<p class="muted">${t(locale,"support.linuxRequirements")}</p>` : null}
+    ${downloadUrl ? null : html`<p class="muted">${t(locale,installCommand ? "support.installerReady" : "support.devOnly",{shell})}</p>`}
     ${installCommand ? html`<div class="field"><p>${t(locale,"installer.downloadSource")}</p>
-      <a class="btn ${downloadSource === "official" ? "btn-primary" : "btn-secondary"}" href="?downloadSource=official">${t(locale,"installer.official")}</a>
-      <a class="btn ${downloadSource === "npmmirror" ? "btn-primary" : "btn-secondary"}" href="?downloadSource=npmmirror">${t(locale,"installer.npmmirror")}</a>
+      <a class="btn ${downloadSource === "official" ? "btn-primary" : "btn-secondary"}" href="?os=${os}&amp;downloadSource=official">${t(locale,"installer.official")}</a>
+      <a class="btn ${downloadSource === "npmmirror" ? "btn-primary" : "btn-secondary"}" href="?os=${os}&amp;downloadSource=npmmirror">${t(locale,"installer.npmmirror")}</a>
       <p class="muted">${t(locale,"installer.sourceHint")}</p></div>` : null}
-    ${downloadUrl ? html`<p>${t(locale,"support.downloadHint")}</p>
-      <a class="btn btn-primary" href="${downloadUrl}">${t(locale,"support.download")}</a>
-      <p class="muted">${t(locale,"support.launchConsent")}</p>` : null}
-    <details><summary>${t(locale,"support.manualCommand")}</summary><div class="code"><div class="code-bar">PowerShell</div>
+    ${downloadUrl ? html`<p>${t(locale,os === "win" ? "support.downloadHint" : "support.posixDownloadHint",{filename})}</p>
+      <a class="btn btn-primary" href="${downloadUrl}">${t(locale,"support.download",{os:system.label})}</a>
+      ${os === "win" ? null : html`<div class="code"><div class="code-body">bash ~/Downloads/${filename}</div></div>`}
+      <p class="muted">${t(locale,os === "win" ? "support.launchConsent" : "support.posixLaunchConsent")}</p>` : null}
+    <details${downloadUrl ? "" : " open"}><summary>${t(locale,"support.manualCommand",{shell})}</summary><div class="code"><div class="code-bar">${shell}</div>
       <div class="code-body" style="overflow-wrap:anywhere">${command}</div></div>
     <button class="btn btn-secondary" type="button" data-copy="${command}" data-copied-label="${t(locale,"common.copied")}">
       ${icon("copy",15)}<span data-copy-label>${t(locale,"support.copyCommand")}</span></button>
-    <p class="muted">${t(locale,"support.customerConsent")}</p></details>
+    <p class="muted">${t(locale,"support.customerConsent",{shell})}</p></details>
   </section>`;
   return soloDocument({locale,title:t(locale,"support.customerTitle"),body,enhance:true});
 }

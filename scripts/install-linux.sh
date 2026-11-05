@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# Open Desktop Remote Agent installer for glibc Linux (user-level; no sudo required).
+set -euo pipefail
+SERVER=''
+PACKAGE_SOURCE='open-desktop-remote-agent@0.1.6'
+DOWNLOAD_SOURCE='official'
+INSTALL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/OpenDesktopRemote"
+INSTALL_ONLY=0
+INSTALL_DIR_EXPLICIT=0
+SUPPORT_INVITE=''
+ACCEPT_SUPPORT=0
+
+while (($#)); do
+  case "$1" in
+    --server|--package|--install-dir|--download-source|--support-invite)
+      if [[ $# -lt 2 || -z "${2:-}" || "$2" == --* ]]; then
+        echo "Missing value for $1." >&2; exit 2
+      fi
+      ;;
+  esac
+  case "$1" in
+    --server) SERVER="$2"; shift 2 ;;
+    --package) PACKAGE_SOURCE="$2"; shift 2 ;;
+    --download-source) DOWNLOAD_SOURCE="$2"; shift 2 ;;
+    --install-dir) INSTALL_DIR="$2"; INSTALL_DIR_EXPLICIT=1; shift 2 ;;
+    --install-only) INSTALL_ONLY=1; shift ;;
+    --support-invite) SUPPORT_INVITE="$2"; shift 2 ;;
+    --accept-support) ACCEPT_SUPPORT=1; shift ;;
+    *) echo "Unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+if [[ ! "$SERVER" =~ ^https://([a-zA-Z0-9.-]+|\[[0-9a-fA-F:]+\])(:[0-9]+)?/?$ ]]; then
+  echo 'Pass a valid HTTPS server origin using --server.' >&2
+  exit 2
+fi
+SERVER="${SERVER%/}"
+if [[ -n "$SUPPORT_INVITE" && ! "$SUPPORT_INVITE" =~ ^[A-Za-z0-9_-]{32}$ ]]; then
+  echo 'Invalid support invite.' >&2; exit 2
+fi
+if [[ "$ACCEPT_SUPPORT" -eq 1 && -z "$SUPPORT_INVITE" ]]; then
+  echo '--accept-support requires a support invitation.' >&2; exit 2
+fi
+if [[ -n "$SUPPORT_INVITE" ]]; then
+  if [[ ! "$PACKAGE_SOURCE" =~ ^open-desktop-remote-agent@(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+    echo 'Support requires an exact, verified npm Agent version.' >&2; exit 2
+  fi
+  major="${BASH_REMATCH[1]}" minor="${BASH_REMATCH[2]}" patch="${BASH_REMATCH[3]}"
+  if [[ "$major" == 0 && ( "$minor" == 0 || ( "$minor" == 1 && "$patch" =~ ^[0-3]$ ) ) ]]; then
+    echo 'This Agent version does not support temporary sessions.' >&2; exit 2
+  fi
+  if [[ "$ACCEPT_SUPPORT" -eq 1 && "$major" == 0 && "$minor" == 1 && "$patch" =~ ^[0-5]$ ]]; then
+    echo 'Downloaded support launchers require Agent 0.1.6 or newer.' >&2; exit 2
+  fi
+  if [[ "$INSTALL_DIR_EXPLICIT" -eq 0 ]]; then
+    INSTALL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/OpenRemoteSupport"
+  fi
+fi
+case "$DOWNLOAD_SOURCE" in
+  official|npmmirror) ;;
+  *) echo 'Download source must be official or npmmirror.' >&2; exit 2 ;;
+esac
+if [[ "$DOWNLOAD_SOURCE" == npmmirror && ! "$PACKAGE_SOURCE" =~ ^open-desktop-remote-agent@[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo 'npmmirror requires an exact npm Agent version.' >&2; exit 2
+fi
+if [[ "$(uname -s)" != Linux ]]; then
+  echo 'This installer only supports Linux.' >&2; exit 2
+fi
+case "$(uname -m)" in
+  aarch64|arm64) arch='arm64' ;;
+  x86_64|x64) arch='x64' ;;
+  *) echo 'Unsupported Linux CPU architecture; use x86_64 or aarch64.' >&2; exit 2 ;;
+esac
+libc="$(getconf GNU_LIBC_VERSION 2>/dev/null || true)"
+if [[ ! "$libc" =~ ^glibc\ ([0-9]+)\.([0-9]+)$ ]] ||
+   (( BASH_REMATCH[1] < 2 || (BASH_REMATCH[1] == 2 && BASH_REMATCH[2] < 28) )); then
+  echo 'Node.js 24 requires glibc 2.28 or newer; musl/Alpine Linux is unsupported.' >&2; exit 2
+fi
+for tool in curl tar sha256sum mktemp grep head cut awk mkdir rm mv; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "Required tool is missing: $tool." >&2; exit 2; }
+done
+scratch=''
+package_scratch=''
+trap '[[ -z "$scratch" ]] || rm -rf "$scratch"; [[ -z "$package_scratch" ]] || rm -rf "$package_scratch"' EXIT
+mkdir -p "$INSTALL_DIR"
+runtime="$INSTALL_DIR/runtime"
+node="$runtime/bin/node"
+version=''
+if [[ -x "$node" ]]; then version="$("$node" --version)"; fi
+if [[ ! "$version" =~ ^v24\. ]]; then
+  base='https://nodejs.org/dist/latest-v24.x'
+  echo 'Downloading Node.js 24 from nodejs.org...'
+  sums="$(curl --fail --silent --show-error --location --connect-timeout 15 --max-time 60 "$base/SHASUMS256.txt")"
+  line="$(printf '%s\n' "$sums" | grep -E "^[a-fA-F0-9]{64}[[:space:]]+node-v24\.[0-9]+\.[0-9]+-linux-$arch\.tar\.gz$" | head -n 1)"
+  [[ -n "$line" ]] || { echo 'Node.js archive checksum not found.' >&2; exit 1; }
+  expected="$(printf '%s' "$line" | cut -c1-64)"
+  archive_name="$(printf '%s' "$line" | awk '{print $2}')"
+  scratch="$(mktemp -d)"
+  if [[ "$DOWNLOAD_SOURCE" == npmmirror ]]; then
+    node_version="${archive_name#node-}"
+    node_version="${node_version%%-linux-*}"
+    if ! curl --fail --silent --show-error --location --connect-timeout 15 --max-time 120 "https://npmmirror.com/mirrors/node/$node_version/$archive_name" -o "$scratch/$archive_name"; then
+      echo 'Mirror download unavailable; downloading Node.js from nodejs.org.'
+      curl --fail --silent --show-error --location --connect-timeout 15 --max-time 120 "$base/$archive_name" -o "$scratch/$archive_name"
+    fi
+  else
+    curl --fail --silent --show-error --location --connect-timeout 15 --max-time 120 "$base/$archive_name" -o "$scratch/$archive_name"
+  fi
+  (cd "$scratch" && printf '%s  %s\n' "$expected" "$archive_name" | sha256sum -c -)
+  tar -xzf "$scratch/$archive_name" -C "$scratch"
+  [[ ! -d "$runtime" ]] || rm -rf "$runtime"
+  mv "$scratch/${archive_name%.tar.gz}" "$runtime"
+fi
+npm="$runtime/lib/node_modules/npm/bin/npm-cli.js"
+[[ -f "$npm" ]] || { echo 'npm missing from Node.js distribution.' >&2; exit 1; }
+# npm lifecycle scripts and Agent children must find the private Node runtime.
+export PATH="$runtime/bin:$PATH"
+cli="$INSTALL_DIR/node_modules/open-desktop-remote-agent/dist/cli.mjs"
+manifest="$INSTALL_DIR/node_modules/open-desktop-remote-agent/package.json"
+expected=''
+if [[ "$PACKAGE_SOURCE" =~ ^open-desktop-remote-agent@([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+  expected="${BASH_REMATCH[1]}"
+fi
+current=''
+if [[ -f "$manifest" ]]; then
+  current="$("$node" -p "require(process.argv[1]).version" "$manifest")"
+fi
+if [[ -n "$expected" && "$current" == "$expected" && -f "$cli" ]]; then
+  echo "Agent $expected is already installed; keeping existing device identity."
+else
+  registry='https://registry.npmjs.org/'
+  install_source="$PACKAGE_SOURCE"
+  if [[ "$DOWNLOAD_SOURCE" == npmmirror ]]; then
+    package_scratch="$(mktemp -d)"
+    curl --fail --silent --show-error --location --connect-timeout 15 --max-time 60 "https://registry.npmjs.org/open-desktop-remote-agent/$expected" -o "$package_scratch/metadata.json"
+    official_tarball="https://registry.npmjs.org/open-desktop-remote-agent/-/open-desktop-remote-agent-$expected.tgz"
+    "$node" -e '
+      const m = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+      if (m.name !== "open-desktop-remote-agent" || m.version !== process.argv[2] ||
+          m.dist?.tarball !== process.argv[3] || !/^sha512-[A-Za-z0-9+/]{86}==$/.test(m.dist?.integrity)) {
+        throw new Error("Official Agent metadata is invalid or lacks SHA512 integrity.");
+      }
+    ' "$package_scratch/metadata.json" "$expected" "$official_tarball"
+    install_source="$package_scratch/agent.tgz"
+    registry='https://registry.npmmirror.com/'
+    if ! curl --fail --silent --show-error --location --connect-timeout 15 --max-time 120 "https://registry.npmmirror.com/open-desktop-remote-agent/-/open-desktop-remote-agent-$expected.tgz" -o "$install_source"; then
+      echo 'Mirror download unavailable; downloading Agent from official npm Registry.'
+      registry='https://registry.npmjs.org/'
+      curl --fail --silent --show-error --location --connect-timeout 15 --max-time 120 "$official_tarball" -o "$install_source"
+    fi
+    "$node" -e '
+      const fs = require("node:fs"), crypto = require("node:crypto");
+      const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const actual = "sha512-" + crypto.createHash("sha512").update(fs.readFileSync(process.argv[2])).digest("base64");
+      if (actual !== m.dist.integrity) throw new Error("Agent archive integrity mismatch.");
+    ' "$package_scratch/metadata.json" "$install_source"
+  fi
+  echo "Installing Agent using $registry"
+  # Never retry npm: a failed install may already have run lifecycle scripts.
+  "$node" "$npm" install "--registry=$registry" --prefix "$INSTALL_DIR" --no-audit --no-fund --package-lock=false "$install_source" || {
+    echo 'npm installation failed. Check network access; installation was not retried.' >&2; exit 1;
+  }
+fi
+[[ -f "$cli" ]] || { echo 'Agent CLI was not installed.' >&2; exit 1; }
+echo "Agent installed in $INSTALL_DIR"
+if [[ "$INSTALL_ONLY" -eq 1 ]]; then exit 0; fi
+[[ -z "$scratch" ]] || rm -rf "$scratch"
+[[ -z "$package_scratch" ]] || rm -rf "$package_scratch"
+if [[ -n "$SUPPORT_INVITE" ]]; then
+  echo 'Temporary support runs in this terminal. Press Ctrl+C to stop sharing.'
+  support_args=(agent support --server "$SERVER" --invite "$SUPPORT_INVITE")
+  if [[ "$ACCEPT_SUPPORT" -eq 1 ]]; then support_args+=(--accept-support); fi
+  exec "$node" "$cli" "${support_args[@]}"
+fi
+echo "Approve your computer at $SERVER/device when the pairing code appears."
+echo 'On a headless machine, open that URL in a browser on another device and enter the pairing code.'
+echo 'Keep this terminal open while you want this computer online.'
+exec "$node" "$cli" agent connect --server "$SERVER"

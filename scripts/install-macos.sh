@@ -6,14 +6,26 @@ PACKAGE_SOURCE='open-desktop-remote-agent@0.1.6'
 DOWNLOAD_SOURCE='official'
 INSTALL_DIR="$HOME/Library/Application Support/OpenDesktopRemote"
 INSTALL_ONLY=0
+INSTALL_DIR_EXPLICIT=0
+SUPPORT_INVITE=''
+ACCEPT_SUPPORT=0
 
 while (($#)); do
+  case "$1" in
+    --server|--package|--install-dir|--download-source|--support-invite)
+      if [[ $# -lt 2 || -z "${2:-}" || "$2" == --* ]]; then
+        echo "Missing value for $1." >&2; exit 2
+      fi
+      ;;
+  esac
   case "$1" in
     --server) SERVER="$2"; shift 2 ;;
     --package) PACKAGE_SOURCE="$2"; shift 2 ;;
     --download-source) DOWNLOAD_SOURCE="${2:-}"; [[ $# -ge 2 ]] || { echo 'Missing download source.' >&2; exit 2; }; shift 2 ;;
-    --install-dir) INSTALL_DIR="$2"; shift 2 ;;
+    --install-dir) INSTALL_DIR="$2"; INSTALL_DIR_EXPLICIT=1; shift 2 ;;
     --install-only) INSTALL_ONLY=1; shift ;;
+    --support-invite) SUPPORT_INVITE="$2"; shift 2 ;;
+    --accept-support) ACCEPT_SUPPORT=1; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -22,6 +34,27 @@ if [[ ! "$SERVER" =~ ^https://([a-zA-Z0-9.-]+|\[[0-9a-fA-F:]+\])(:[0-9]+)?/?$ ]]
   exit 2
 fi
 SERVER="${SERVER%/}"
+if [[ -n "$SUPPORT_INVITE" && ! "$SUPPORT_INVITE" =~ ^[A-Za-z0-9_-]{32}$ ]]; then
+  echo 'Invalid support invite.' >&2; exit 2
+fi
+if [[ "$ACCEPT_SUPPORT" -eq 1 && -z "$SUPPORT_INVITE" ]]; then
+  echo '--accept-support requires a support invitation.' >&2; exit 2
+fi
+if [[ -n "$SUPPORT_INVITE" ]]; then
+  if [[ ! "$PACKAGE_SOURCE" =~ ^open-desktop-remote-agent@(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+    echo 'Support requires an exact, verified npm Agent version.' >&2; exit 2
+  fi
+  major="${BASH_REMATCH[1]}" minor="${BASH_REMATCH[2]}" patch="${BASH_REMATCH[3]}"
+  if [[ "$major" == 0 && ( "$minor" == 0 || ( "$minor" == 1 && "$patch" =~ ^[0-3]$ ) ) ]]; then
+    echo 'This Agent version does not support temporary sessions.' >&2; exit 2
+  fi
+  if [[ "$ACCEPT_SUPPORT" -eq 1 && "$major" == 0 && "$minor" == 1 && "$patch" =~ ^[0-5]$ ]]; then
+    echo 'Downloaded support launchers require Agent 0.1.6 or newer.' >&2; exit 2
+  fi
+  if [[ "$INSTALL_DIR_EXPLICIT" -eq 0 ]]; then
+    INSTALL_DIR="$HOME/Library/Application Support/OpenRemoteSupport"
+  fi
+fi
 case "$DOWNLOAD_SOURCE" in
   official|npmmirror) ;;
   *) echo 'Download source must be official or npmmirror.' >&2; exit 2 ;;
@@ -121,6 +154,12 @@ echo "Agent installed in $INSTALL_DIR"
 if [[ "$INSTALL_ONLY" -eq 1 ]]; then exit 0; fi
 [[ -z "$scratch" ]] || rm -rf "$scratch"
 [[ -z "$package_scratch" ]] || rm -rf "$package_scratch"
+if [[ -n "$SUPPORT_INVITE" ]]; then
+  echo 'Temporary support runs in this terminal. Press Ctrl+C to stop sharing.'
+  support_args=(agent support --server "$SERVER" --invite "$SUPPORT_INVITE")
+  if [[ "$ACCEPT_SUPPORT" -eq 1 ]]; then support_args+=(--accept-support); fi
+  exec "$node" "$cli" "${support_args[@]}"
+fi
 echo "Approve your computer at $SERVER/device when the pairing code appears."
 echo 'Keep this Terminal window open while you want this computer online.'
 exec "$node" "$cli" agent connect --server "$SERVER"

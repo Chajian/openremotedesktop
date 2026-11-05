@@ -1,11 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { renderCustomerSupport } from "../dashboard/views/support.js";
-import { installerInstructions, downloadSourceFromQuery } from "../dashboard/installer.js";
+import { installerInstructions, downloadSourceFromQuery, installerOsFromQuery, supportsAgentSupport, type InstallerOS } from "../dashboard/installer.js";
 import { localeFromRequest } from "../dashboard/ui/i18n.js";
 import { publicBaseUrlForHost, type ServerConfig } from "../config.js";
 import { SupportService, SupportNotFoundError,
   SupportInviteExpiredError, SupportAlreadyJoinedError } from "./support-service.js";
-import { supportDownloadUrl, supportLauncher, supportsDownloadedLauncher } from "./support-launcher.js";
+import { supportDownloadUrl, supportLauncher, supportsDownloadedLauncher, supportFiles } from "./support-launcher.js";
 
 function errorReply(reply: {code(n: number): {send(data: unknown): unknown}}, error: unknown) {
   if (error instanceof SupportNotFoundError) return reply.code(404).send({error:"SUPPORT_NOT_FOUND"});
@@ -15,22 +15,24 @@ function errorReply(reply: {code(n: number): {send(data: unknown): unknown}}, er
 }
 
 export function registerSupportRoutes(app: FastifyInstance, support: SupportService, config: ServerConfig): void {
-  app.get("/support/invite/:invite/windows.cmd", async (request, reply) => {
-    reply.header("Cache-Control", "no-store").header("Referrer-Policy", "no-referrer");
-    reply.header("X-Content-Type-Options", "nosniff");
-    if (!config.supportEnabled || !config.agentInstallEnabled || !supportsDownloadedLauncher(config.supportAgentVersion)) {
-      return reply.code(404).send();
-    }
-    const {invite} = request.params as {invite: string};
-    try {
-      support.preview(invite);
-      const origin = publicBaseUrlForHost(config, request.headers.host);
-      const source = downloadSourceFromQuery((request.query as {downloadSource?: unknown}).downloadSource);
-      const file = supportLauncher(origin, invite, config.supportAgentVersion!, source);
-      return reply.header("Content-Disposition", 'attachment; filename="OpenRemote-Support.cmd"')
-        .type("application/octet-stream").send(file);
-    } catch (error) { return errorReply(reply, error); }
-  });
+  for (const os of ["win", "mac", "linux"] as const satisfies readonly InstallerOS[]) {
+    app.get(`/support/invite/:invite/${supportFiles[os].route}`, async (request, reply) => {
+      reply.header("Cache-Control", "no-store").header("Referrer-Policy", "no-referrer");
+      reply.header("X-Content-Type-Options", "nosniff");
+      if (!config.supportEnabled || !config.agentInstallEnabled || !supportsDownloadedLauncher(config.supportAgentVersion)) {
+        return reply.code(404).send();
+      }
+      const {invite} = request.params as {invite: string};
+      try {
+        support.preview(invite);
+        const origin = publicBaseUrlForHost(config, request.headers.host);
+        const source = downloadSourceFromQuery((request.query as {downloadSource?: unknown}).downloadSource);
+        const file = supportLauncher(origin, invite, config.supportAgentVersion!, source, os);
+        return reply.header("Content-Disposition", `attachment; filename="${supportFiles[os].filename}"`)
+          .type("application/octet-stream").send(file);
+      } catch (error) { return errorReply(reply, error); }
+    });
+  }
   app.get("/support/invite/:invite", async (request, reply) => {
     if (!config.supportEnabled) return reply.code(404).send();
     reply.header("Cache-Control","no-store").header("Referrer-Policy","no-referrer");
@@ -40,15 +42,17 @@ export function registerSupportRoutes(app: FastifyInstance, support: SupportServ
     try {
       const preview = support.preview(invite);
       const baseUrl = publicBaseUrlForHost(config, request.headers.host);
-      const downloadSource = downloadSourceFromQuery((request.query as {downloadSource?: unknown}).downloadSource);
-      const install = config.agentInstallEnabled && config.supportAgentVersion
-        ? installerInstructions("win", baseUrl, {invite, version:config.supportAgentVersion}, downloadSource).command
+      const query = request.query as {downloadSource?: unknown; os?: unknown};
+      const downloadSource = downloadSourceFromQuery(query.downloadSource);
+      const os = installerOsFromQuery(query.os);
+      const install = config.agentInstallEnabled && supportsAgentSupport(config.supportAgentVersion)
+        ? installerInstructions(os, baseUrl, {invite, version:config.supportAgentVersion!}, downloadSource).command
         : undefined;
       return reply.type("text/html; charset=utf-8").send(renderCustomerSupport(
         localeFromRequest(request), baseUrl, invite,
         preview.label, preview.inviteExpiresAt, install, downloadSource,
         install && supportsDownloadedLauncher(config.supportAgentVersion)
-          ? supportDownloadUrl(baseUrl, invite, downloadSource) : undefined));
+          ? supportDownloadUrl(baseUrl, invite, downloadSource, os) : undefined, os));
     } catch (error) { return errorReply(reply, error); }
   });
 

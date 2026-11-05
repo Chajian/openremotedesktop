@@ -7,7 +7,7 @@ const listed = (x:unknown) => ((x as {structuredContent?:{
   devices?:Array<{id:string;state:string}>}}).structuredContent?.devices ?? []);
 
 describe("temporary customer support",()=>{
-  it("supports two approved AI clients and disconnects both when the owner ends support",async()=>{
+  it.each(["win32", "darwin", "linux"])("supports %s with two approved AI clients and disconnects both on owner end",async(platform)=>{
     const server=await startTestServer({supportEnabled:true});
     let agent:Awaited<ReturnType<typeof startFakeAgent>>|undefined;
     let clientA:Awaited<ReturnType<typeof connectMcpClient>>|undefined;
@@ -27,7 +27,7 @@ describe("temporary customer support",()=>{
       expect(invite).toHaveLength(32);
       const join=await fetch(new URL("/api/support/join",server.baseUrl),{
         method:"POST",headers:{"content-type":"application/json"},
-        body:JSON.stringify({invite,deviceName:"Windows Customer",platform:"win32"}),
+        body:JSON.stringify({invite,deviceName:"Customer Computer",platform}),
       });
       expect(join.status).toBe(201);
       const joined=await join.json() as {deviceId:string;refreshCredential:string};

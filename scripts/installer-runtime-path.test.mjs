@@ -8,6 +8,7 @@ import test from "node:test";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const windows = process.platform === "win32";
+const unixInstaller = process.platform === "linux" ? "install-linux.sh" : "install-macos.sh";
 const nodeDirectory = dirname(process.execPath);
 const npmDirectory = [
   join(nodeDirectory, "node_modules/npm"),
@@ -71,7 +72,7 @@ function fixture(t) {
   const systemTools = join(directory, "system-tools");
   mkdirSync(systemTools);
   if (!windows) {
-    for (const name of ["uname", "mkdir", "sh"]) {
+    for (const name of ["uname", "mkdir", "sh", ...(process.platform === "linux" ? ["getconf", "curl", "tar", "sha256sum", "mktemp", "grep", "head", "cut", "awk", "rm", "mv"] : [])]) {
       const command = run("/bin/sh", ["-c", `command -v ${name}`]);
       assert.equal(command.status, 0);
       symlinkSync(command.stdout.trim(), join(systemTools, name));
@@ -80,7 +81,7 @@ function fixture(t) {
   return { directory, install, bin, archive, systemTools, packageDirectory };
 }
 
-for (const mode of ["install-only", "connect", "npm-failure", ...(windows ? ["support", "support-failure", "support-launcher"] : [])]) {
+for (const mode of ["install-only", "connect", "npm-failure", "support", "support-failure", "support-launcher"]) {
   test(`installer supplies private Node to child processes (${mode})`, (t) => {
     const f = fixture(t);
     const support = mode.startsWith("support");
@@ -129,10 +130,12 @@ for (const mode of ["install-only", "connect", "npm-failure", ...(windows ? ["su
         "-Destination", f.install, "-Archive", f.archive, "-Mode", mode], { env });
     } else {
       env.PATH = f.systemTools;
-      result = run("/bin/bash", [join(root, "scripts/install-macos.sh"), "--server", "https://remote.example.test",
-        "--install-dir", f.install, "--package", f.archive, ...(mode === "connect" ? [] : ["--install-only"])], { env });
+      result = run("/bin/bash", [join(root, "scripts", unixInstaller), "--server", "https://remote.example.test",
+        "--install-dir", f.install, "--package", support ? `open-desktop-remote-agent@${mode === "support-launcher" ? "0.1.6" : "0.1.4"}` : f.archive,
+        ...(support ? ["--support-invite", invite] : mode === "connect" ? [] : ["--install-only"]),
+        ...(mode === "support-launcher" ? ["--accept-support"] : [])], { env });
     }
-    const expectedStatus = !windows && mode === "npm-failure" ? 1 : 0;
+    const expectedStatus = !windows && mode === "npm-failure" ? 1 : !windows && mode === "support-failure" ? 19 : 0;
     assert.equal(result.status, expectedStatus, result.stdout + result.stderr);
     // Reaching the real npm postinstall proves PATH lookup worked even on failure.
     if (support) {

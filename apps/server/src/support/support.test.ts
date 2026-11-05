@@ -9,7 +9,7 @@ import {SessionRepository} from "../auth/session-repository.js";
 import {ConnectionRegistry} from "../relay/connection-registry.js";
 import {RequestBroker} from "../relay/request-broker.js";
 import {DeviceManagementService} from "../devices/device-management-service.js";
-import {SupportService} from "./support-service.js";
+import {SupportAlreadyJoinedError, SupportInviteExpiredError, SupportNotFoundError, SupportService} from "./support-service.js";
 
 async function fixture(enabled = true, agentInstallEnabled = false, version = "0.1.4") {
   const db = createDatabase(":memory:");
@@ -27,6 +27,7 @@ async function fixture(enabled = true, agentInstallEnabled = false, version = "0
 const csrf = (html:string) => /name="csrf" value="([^"]+)"/.exec(html)?.[1] ?? "";
 const inviteFrom = (html:string) =>
   /https:\/\/remote\.example\.com\/support\/invite\/([A-Za-z0-9_-]{32})/.exec(html)?.[1] ?? "";
+const supportPlatforms = ["win32", "darwin", "linux"] as const;
 
 describe("temporary support sessions", () => {
   it("downloads an anonymous launcher without consuming the invite, and rejects unavailable invites", async () => {
@@ -103,7 +104,7 @@ describe("temporary support sessions", () => {
       expect((await f.app.inject({method:"POST",url:"/api/support/join",payload:{}})).statusCode).toBe(404);
     } finally {await f.dispose();}
   });
-  it("creates an expiring invite, joins without a customer account, and ends manually", async () => {
+  it.each(supportPlatforms)("joins %s without a customer account and revokes on owner end", async (platform) => {
     const f = await fixture();
     try {
       const page = await f.app.inject({url:"/dashboard/support",headers:{cookie:f.cookie}});
@@ -120,13 +121,14 @@ describe("temporary support sessions", () => {
       expect(before.json()).toMatchObject({label:"Customer 1",access:"full"});
       expect((await f.app.inject({url:"/support/invite/"+invite})).body).toContain("Developer preview");
       expect((await f.app.inject({method:"POST",url:"/api/support/join",
-        payload:{invite,deviceName:"Customer Laptop",platform:"darwin"}})).statusCode).toBe(400);
+        payload:{invite,deviceName:"Customer Laptop",platform:"freebsd"}})).statusCode).toBe(400);
       const joined = await f.app.inject({method:"POST",url:"/api/support/join",
-        payload:{invite,deviceName:"Customer Laptop",platform:"win32"}});
+        payload:{invite,deviceName:"Customer Laptop",platform}});
       expect(joined.statusCode).toBe(201);
       const {deviceId,refreshCredential} = joined.json();
+      expect(new DeviceRepository(f.db).findById(deviceId)?.ownerId).toBe(f.ownerId);
       expect((await f.app.inject({method:"POST",url:"/api/support/join",
-        payload:{invite,deviceName:"Again",platform:"win32"}})).statusCode).toBe(409);
+        payload:{invite,deviceName:"Again",platform}})).statusCode).toBe(409);
       const token = await f.app.inject({method:"POST",url:"/api/device-auth/refresh",
         payload:{refreshCredential}});
       expect(token.statusCode).toBe(200);
@@ -228,24 +230,32 @@ describe("temporary support sessions", () => {
           payload:{refreshCredential}});
         expect(status.statusCode).toBe(404);
         expect(status.json()).toEqual({error:"SUPPORT_NOT_FOUND"});
+        expect((await f.app.inject({method:"POST",url:"/api/support/stop",
+          payload:{refreshCredential}})).statusCode).toBe(404);
       }
+      expect(new DeviceCredentials(f.db).activeDeviceId(regularCredential)).toBe(device.id);
     } finally {await f.dispose();}
   });
 
-  it("lets the customer stop sharing and prevents other owners from ending sessions", async () => {
+  it.each(supportPlatforms)("revokes %s customer sharing and rejects another owner", async (platform) => {
     const f = await fixture();
     try {
       const page = await f.app.inject({url:"/dashboard/support",headers:{cookie:f.cookie}});
       const created = await f.app.inject({method:"POST",url:"/dashboard/support/create",
         headers:{cookie:f.cookie},payload:{csrf:csrf(page.body),label:"Customer 2"}});
       const invite = inviteFrom(created.body);
-      const {deviceId,refreshCredential} = (await f.app.inject({method:"POST",url:"/api/support/join",
-        payload:{invite,deviceName:"Laptop",platform:"win32"}})).json();
+      const joined = await f.app.inject({method:"POST",url:"/api/support/join",
+        payload:{invite,deviceName:"Laptop",platform}});
+      expect(joined.statusCode).toBe(201);
+      const {deviceId,refreshCredential} = joined.json();
       const sessionId = (f.db.prepare("SELECT id FROM support_sessions").get() as {id:string}).id;
       const bob = new OwnerRepository(f.db).findOrCreateGitHubUser("9292","bob");
       const bobCookie = "odr_session=" + new SessionRepository(f.db).createOwnerSession(bob.id);
       const bobPage = await f.app.inject({url:"/dashboard/support",headers:{cookie:bobCookie}});
       expect(bobPage.body).not.toContain("Customer 2");
+      expect((await f.app.inject({url:"/api/devices",headers:{cookie:bobCookie}})).json()).toEqual([]);
+      expect((await f.app.inject({method:"DELETE",url:"/api/devices/"+deviceId,
+        headers:{cookie:bobCookie}})).statusCode).toBe(404);
       expect((await f.app.inject({method:"POST",url:`/dashboard/support/${sessionId}/end`,
         headers:{cookie:bobCookie},payload:{csrf:csrf(bobPage.body)}})).statusCode).toBe(404);
       expect((await f.app.inject({method:"POST",url:"/api/support/stop",
@@ -257,6 +267,8 @@ describe("temporary support sessions", () => {
         payload:{refreshCredential}});
       expect(status.statusCode).toBe(200);
       expect(status.json()).toEqual({state:"ended",reason:"customer"});
+      expect((await f.app.inject({method:"POST",url:"/api/device-auth/refresh",
+        payload:{refreshCredential}})).statusCode).toBe(401);
       expect((await f.app.inject({method:"POST",url:"/api/support/stop",
         payload:{refreshCredential}})).statusCode).toBe(404);
     } finally {await f.dispose();}
@@ -283,6 +295,45 @@ describe("temporary support sessions", () => {
 });
 
 describe("focused active-support and transactional boundaries", () => {
+  it.each([
+    ["win32", "Customer Windows"], ["darwin", "Customer macOS"], ["linux", "Customer Linux"],
+  ])("assigns an owned default name for %s and rejects expired invitations", async (platform, name) => {
+    const f = await fixture();
+    try {
+      const devices = new DeviceRepository(f.db);
+      const registry = new ConnectionRegistry();
+      let now = Date.now();
+      const service = new SupportService(f.db, devices,
+        new DeviceManagementService(devices, registry, new RequestBroker(registry)), () => now);
+      const expired = service.create(f.ownerId, "Expired invitation");
+      now += 300_000;
+      expect(() => service.join(expired.invite, "", platform)).toThrow(SupportInviteExpiredError);
+      expect(() => service.join("invalid", "", platform)).toThrow(SupportNotFoundError);
+      expect(() => service.join("x".repeat(32), "", platform)).toThrow(SupportNotFoundError);
+      expect(devices.listDevices()).toHaveLength(0);
+      const valid = service.create(f.ownerId, "Platform default");
+      const joined = service.join(valid.invite, "  ", platform);
+      expect(devices.findById(joined.deviceId)).toMatchObject({name, ownerId:f.ownerId});
+      expect(() => service.join(valid.invite, "Second customer", platform)).toThrow(SupportAlreadyJoinedError);
+      expect(devices.listDevices()).toHaveLength(1);
+    } finally { await f.dispose(); }
+  });
+
+  it.each(["freebsd", "", "Windows", "darwin-extra"])("rejects unsupported platform %s without consuming the invitation", async (platform) => {
+    const f = await fixture();
+    try {
+      const devices = new DeviceRepository(f.db);
+      const registry = new ConnectionRegistry();
+      const service = new SupportService(f.db, devices,
+        new DeviceManagementService(devices, registry, new RequestBroker(registry)));
+      const {invite} = service.create(f.ownerId, "Unsupported platform");
+      expect(() => service.join(invite, "Customer", platform)).toThrow(TypeError);
+      expect(service.preview(invite).access).toBe("full");
+      expect(devices.listDevices()).toHaveLength(0);
+      expect(f.db.prepare("SELECT COUNT(*) AS n FROM device_credentials").get()).toEqual({n:0});
+    } finally { await f.dispose(); }
+  });
+
   it("queries only live, owned support and permits ending with issuance disabled", async () => {
     const f = await fixture(false);
     try {

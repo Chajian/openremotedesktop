@@ -14,11 +14,11 @@
 
 POSIX 夹具发送真实 SIGTERM；Windows 夹具通过私有测试 IPC 进入 CLI 已有的停止回调，再检查相同的资源释放结果。这不代表 Windows 强制终止信号具有 POSIX 的优雅退出语义。夹具的异常兜底清理会使测试失败，不能代替 Agent 自己的正常关闭。上述包级验收接入现有三平台工作流，不能代替真实用户安装、配对、升级或生产验收。
 
-Agent 发行版本的唯一来源是 `apps/agent/src/version.json`。Relay 握手中的 `agentVersion` 和生成的 npm 包版本读取同一份数据；`node scripts/set-agent-version.mjs X.Y.Z` 同时更新该数据、Windows/macOS 安装脚本及 Server 安装器版本。内部工作区包的 `0.0.0` 不作为发行版本。
+Agent 发行版本的唯一来源是 `apps/agent/src/version.json`。Relay 握手中的 `agentVersion` 和生成的 npm 包版本读取同一份数据；`node scripts/set-agent-version.mjs X.Y.Z` 同时更新该数据、Windows/macOS/Linux 安装脚本及 Server 安装器版本。内部工作区包的 `0.0.0` 不作为发行版本。
 
 本次准备 Agent `0.1.6` 候选版本，支持带邀请的 Windows 下载启动文件：双击自动安装并连接，无需输入协助码或 YES，前台显示权限说明并保留 Ctrl+C 撤销。复用已有安装器、下载校验、可选 npmmirror 加速和停止清理流程。继续使用 Desktop Commander `0.3.1`，不覆盖已发布版本。准备版本号不代表 npm 已公开发布或线上入口已开启；`ODR_AGENT_INSTALL_ENABLED` 和 `ODR_SUPPORT_ENABLED` 保持默认关闭。
 
-临时协助仅支持 Windows：发起者登录创建邀请，被协助者无需登录。普通命令行仍要求输入 `YES`；0.1.6 起下载启动文件通过显式 `--accept-support` 将运行文件作为开始协助的动作，页面和窗口均说明完整远程权限。发布后将 `ODR_SUPPORT_AGENT_VERSION` 指向已公开且已验证的精确版本；下载启动、READY、真实工具调用及双方结束协助的验收仍需单独完成。macOS 的普通设备接入继续支持，临时协助尚不支持。
+临时协助支持 Windows、macOS 和 Linux：发起者登录创建邀请，被协助者无需登录，在邀请页选择系统和官方源或 npmmirror 加速源。Windows 下载 `.cmd` 后双击；macOS 下载 `.command`、Linux 下载 `.sh`，按页面提示使用 Bash 运行。普通命令行仍要求输入 `YES`；0.1.6 起下载启动文件通过显式 `--accept-support` 将运行文件作为开始协助的动作，页面和窗口均说明完整远程权限。POSIX 安装器使用独立的 `OpenRemoteSupport` 目录，前台运行，不读取或保存普通设备凭据、不安装服务。发布后将 `ODR_SUPPORT_AGENT_VERSION` 指向已公开且已验证的精确版本；三个平台的下载启动、READY、真实工具调用及双方结束协助的验收仍需单独完成。自动化测试不能替代实机验收。
 
 ## 配置 npm Trusted Publisher
 
@@ -53,7 +53,7 @@ git push origin agent-v0.1.6
 
 5. GitHub Actions 自动验证标签版本和 `master` 提交关系，通过后创建带下载附件的 GitHub Release，并执行 `npm stage publish --access public`。新标签验证和暂存前都会查询公开 npm Registry：只有明确的 HTTP 404 表示版本可用；已发布版本、认证/限流/服务端错误、网络失败和超时均阻止暂存。即使已发布元数据看似相同，也不把它当作本次 tarball 内容相同的证据。
 6. 如果是新 npm 版本，在 npm → Staged Packages 审查包名、版本及内容，并用本人 Passkey 点击 Approve，才会正式发布到 Registry。
-7. 在 npm Registry 验证发布版本并在干净 Windows/macOS 上完成真实配对及 READY 测试后，才可启用 `ODR_AGENT_INSTALL_ENABLED=true`。
+7. 在 npm Registry 验证发布版本并在干净 Windows/macOS/Linux 上完成真实配对及 READY 测试后，才可启用 `ODR_AGENT_INSTALL_ENABLED=true`。Linux x64/ARM64 的安装、无桌面配对和重连需分别验收；WSL 夹具或 `--install-only` 不代替真实配对。
 
 GitHub Actions 不能替你批准暂存包；这是有意保留的发布安全门槛。
 
@@ -64,7 +64,7 @@ GitHub Actions 不能替你批准暂存包；这是有意保留的发布安全�
 标签 `agent-v0.1.1` 会在通过验证后自动创建 `Open Desktop Remote Agent 0.1.1` 的公开 GitHub Release，不需要在仓库右侧手工点击“Create a new release”。随 Release 自动附上：
 
 - `open-desktop-remote-agent-0.1.1.tgz`：跨平台 npm 包（不包含 Node 运行时和完整 npm 依赖树）。
-- `install-windows.ps1` 与 `install-macos.sh`：当前用户权限的轻量安装脚本。
+- `install-windows.ps1` 与 `install-macos.sh`：当前用户权限的轻量安装脚本；包含 Linux 安装器的新版本还附上 `install-linux.sh`。
 - `README-INSTALLATION.txt`：安装说明及独立 npm 批准提醒。
 - `SHA256SUMS.txt`：以上文件的 SHA-256 校验值。
 
