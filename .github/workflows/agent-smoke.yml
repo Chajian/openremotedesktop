@@ -42,6 +42,11 @@ jobs:
         run: node --test scripts/installer-runtime-path.test.mjs
       - name: Downloaded support launcher regression
         run: node --test scripts/support-launcher.test.mjs
+      - name: Execute generated support launchers on native POSIX
+        if: runner.os != 'Windows'
+        env:
+          ODR_TEST_REQUIRE_NATIVE_POSIX: "1"
+        run: node --test scripts/posix-support-launcher.test.mjs
       - name: Installer verified mirror and fallback regression
         run: node --test scripts/installer-download-source.test.mjs
       - name: Linux installer prerequisites and failure guards

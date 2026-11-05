@@ -6,6 +6,7 @@
 
 - `ci.yml`：push / PR 的基础测试、类型检查、E2E 和 Docker 构建。
 - `agent-smoke.yml`：Windows、macOS、Linux 的 Agent 与 npm 安装包冒烟验证。
+- 该工作流在原生 macOS/Linux 使用 `node --test scripts/posix-support-launcher.test.mjs` 执行实际生成的协助包装脚本，无需安装 Server 工作区。测试使用本地下载和安装器替身，检查两种下载源的参数、退出码、摘要拒绝、邀请失效及临时文件清理，并断言本机用例全部执行；不代表真实联网安装或设备 READY 验收。
 - `npm-agent-release.yml`：PR 或手动运行时仅验证；匹配 `agent-v*` 的标签触发跨平台验证、npm 暂存发布，以及带附件的 GitHub Release 自动创建。
 
 发布工作流会在三种系统验证打包及 25 个 Desktop Commander 工具，然后在 Ubuntu 上完整测试并通过 npm OIDC 提交暂存包。批准操作仅能在 npm 账号内由本人执行。另一个独立任务从经过验证的 npm tarball 生成 GitHub Release 附件并发布 GitHub Release，不绕过 npm 审核。
