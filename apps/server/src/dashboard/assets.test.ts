@@ -7,6 +7,7 @@ import { html } from "./ui/html.js";
 import { renderLogin } from "./views/login.js";
 import { renderActivate } from "./views/activate.js";
 import { renderConnect } from "./views/connect.js";
+import { renderSupportDashboard, type SupportFormState } from "./views/support.js";
 import { renderConsentPage } from "../oauth/consent-page.js";
 
 const cleanup: Array<() => Promise<void>> = [];
@@ -25,6 +26,8 @@ class Element {
   dataset: Record<string, string> = {};
   attributes: Record<string, string> = {};
   value = ""; type = "text"; name = ""; id = ""; className = ""; textContent = "";
+  min = ""; max = ""; step = "";
+  validity = { valid: true, rangeOverflow: false }; validityReports = 0;
   required = false; disabled = false; hidden = false; maxLength = 0; parent: Element | null = null;
   children: Element[] = []; elements: Element[] = [];
   events = new Map<string, Array<(e: any) => unknown>>();
@@ -33,6 +36,8 @@ class Element {
   classList = { add: (c: string) => { this.className += " " + c; }, remove: (c: string) => { this.className = this.className.split(" ").filter(x => x !== c).join(" "); }, toggle: (c: string, on: boolean) => { this.classList.remove(c); if (on) this.classList.add(c); }, contains: (c: string) => this.className.split(" ").includes(c) };
   constructor(readonly tagName: string) {}
   get form(): Element | null { return this.tagName === "FORM" ? null : this.closest("form"); }
+  get selectedOptions() { return this.children.filter(child => child.tagName === "OPTION" && child.value === this.value); }
+  reportValidity() { this.validityReports++; return this.validity.valid; }
   setAttribute(k: string, v: string) { this.attributes[k] = String(v); }
   getAttribute(k: string) { return this.attributes[k] ?? null; }
   removeAttribute(k: string) { delete this.attributes[k]; if (k === "required") this.required = false; }
@@ -73,6 +78,33 @@ async function dom(options: { rejectCopy?: boolean; noTargets?: boolean } = {}) 
   const document = { body, createElement: (tag: string) => new Element(tag.toUpperCase()), querySelectorAll: (s: string) => options.noTargets ? [] : targets[s] ?? [], getElementById: (id: string) => id === name.id ? name : id === input.id ? input : null };
   runInNewContext(response.body, { document, navigator: { clipboard: { writeText: async (text: string) => { if (options.rejectCopy) throw Error("denied"); copied.push(text); } } }, setTimeout: (fn: () => void) => { timers.push(fn); return timers.length; }, clearTimeout: () => {}, Event: class { constructor(public type: string) {} } });
   return { body, form, input, submit, copy, label, suggestion, name, confirm, dangerSubmit, copied, timers, cells: () => body.querySelectorAll(".cell") };
+}
+
+async function durationDom(state: SupportFormState = {}) {
+  const response = await asset();
+  const page = renderSupportDashboard(ctx, [], new Map(), true, state);
+  const inputTag = page.match(/<input\b[^>]*name="inviteDuration"[^>]*>/)?.[0] ?? "";
+  const selectTag = page.match(/<select\b[^>]*name="inviteDurationUnit"[^>]*>[\s\S]*?<\/select>/)?.[0] ?? "";
+  const attribute = (tag: string, name: string) => tag.match(new RegExp(name + '="([^"]*)"'))?.[1] ?? "";
+  const input = new Element("INPUT"), unit = new Element("SELECT");
+  input.id = attribute(inputTag, "id"); input.value = attribute(inputTag, "value");
+  input.min = attribute(inputTag, "min"); input.max = attribute(inputTag, "max"); input.step = attribute(inputTag, "step");
+  unit.dataset.durationInput = attribute(selectTag, "data-duration-input");
+  for (const tag of selectTag.match(/<option\b[^>]*>/g) ?? []) {
+    const option = new Element("OPTION");
+    option.value = attribute(tag, "value"); option.dataset.max = attribute(tag, "data-max");
+    unit.append(option);
+    if (/\bselected\b/.test(tag)) unit.value = option.value;
+  }
+  for (const [element, tag] of [[input, inputTag], [unit, selectTag]] as const) {
+    element.setAttribute("aria-invalid", attribute(tag, "aria-invalid"));
+    element.setAttribute("aria-describedby", attribute(tag, "aria-describedby"));
+  }
+  runInNewContext(response.body, { document: {
+    querySelectorAll: (selector: string) => selector === "select[data-duration-input]" && unit.dataset.durationInput ? [unit] : [],
+    getElementById: (id: string) => id === input.id ? input : null,
+  } });
+  return { input, unit };
 }
 
 describe("dashboard enhancement asset", () => {
@@ -118,6 +150,56 @@ describe("dashboard enhancement asset", () => {
     for (const step of [1, 2, 3] as const) expect(renderConnect(ctx, { step, os: "win", error: null, values: { userCode: "", friendlyName: "" } })).toContain(script);
     expect(renderLogin({ locale: "en", returnTo: "/dashboard", csrf: "x", githubEnabled: true, error: null })).not.toContain("<script");
     expect(renderConsentPage({ returnTo: "/oauth/authorize?x=1", csrf: "x", clientId: "x", redirectUri: "https://client.example/cb", scope: "mcp offline_access" })).not.toContain("<script");
+  });
+  it("updates duration limits without replacing the typed value and reports an overflow", async () => {
+    const d = await durationDom({ inviteDuration: "169" });
+    expect(d.input.max).toBe("10080");
+    for (const [unit, max] of [["hours", "168"], ["days", "7"]] as const) {
+      d.unit.value = unit;
+      // Native validity is supplied at the DOM boundary; real-browser QA checks it.
+      d.input.validity = { valid: false, rangeOverflow: true };
+      await d.unit.fire("change", { type: "change" });
+      expect(d.input.max).toBe(max);
+      expect(d.input.value).toBe("169");
+      expect(d.input.getAttribute("aria-invalid")).toBe("true");
+      expect(d.unit.getAttribute("aria-invalid")).toBe("true");
+    }
+    expect(d.input.validityReports).toBe(2);
+    d.unit.value = "minutes"; d.input.validity = { valid: true, rangeOverflow: false };
+    await d.unit.fire("change", { type: "change" });
+    expect(d.input.max).toBe("10080"); expect(d.input.value).toBe("169");
+    expect(d.input.min).toBe("1"); expect(d.input.step).toBe("1");
+    expect(d.input.getAttribute("aria-invalid")).toBe("false");
+    expect(d.unit.getAttribute("aria-invalid")).toBe("false");
+    expect(d.input.validityReports).toBe(2);
+  });
+  it("preserves a server error on load and clears invalid state when the value is corrected", async () => {
+    const d = await durationDom({ inviteDuration: "8", inviteDurationUnit: "days", expiryError: true });
+    expect(d.input.max).toBe("7"); expect(d.input.value).toBe("8");
+    for (const field of [d.input, d.unit]) {
+      expect(field.getAttribute("aria-invalid")).toBe("true");
+      expect(field.getAttribute("aria-describedby")).toBe("support-invite-duration-hint support-invite-duration-error");
+    }
+    d.input.value = "7"; d.input.validity = { valid: true, rangeOverflow: false };
+    await d.input.fire("input", { type: "input" });
+    expect(d.input.max).toBe("7"); expect(d.input.value).toBe("7");
+    expect(d.input.getAttribute("aria-invalid")).toBe("false");
+    expect(d.unit.getAttribute("aria-invalid")).toBe("false");
+    for (const field of [d.input, d.unit]) {
+      expect(field.getAttribute("aria-describedby")).toBe("support-invite-duration-hint");
+    }
+    expect(d.input.validityReports).toBe(0);
+  });
+  it("keeps an unselected unit invalid until the user chooses a supported unit", async () => {
+    const d = await durationDom({ inviteDuration: "2", inviteDurationUnit: "weeks", expiryError: true });
+    d.unit.validity = { valid: false, rangeOverflow: false };
+    await d.input.fire("input", { type: "input" });
+    expect(d.unit.getAttribute("aria-invalid")).toBe("true");
+    d.unit.value = "hours"; d.unit.validity = { valid: true, rangeOverflow: false };
+    await d.unit.fire("change", { type: "change" });
+    expect(d.input.max).toBe("168"); expect(d.input.value).toBe("2");
+    expect(d.input.getAttribute("aria-invalid")).toBe("false");
+    expect(d.unit.getAttribute("aria-invalid")).toBe("false");
   });
   it("does nothing on a page without enhancement targets", async () => { const d = await dom({ noTargets: true }); expect(d.cells()).toHaveLength(0); expect(d.input.type).toBe("text"); });
   it("copies the exact payload and restores the localized label", async () => {

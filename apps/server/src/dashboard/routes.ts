@@ -146,6 +146,7 @@ export function registerDashboardRoutes(
   app.get("/dashboard/support", async (request, reply) => {
     const auth = requireDashboardAuth(request, reply, deps.sessions);
     if (!auth) return;
+    interactivePage(reply);
     const sessions = deps.support.listOwned(auth.principal.ownerId);
     const statuses = new Map(deps.registry.snapshot().map(s => [s.deviceId, s.state]));
     return reply.type("text/html; charset=utf-8").send(

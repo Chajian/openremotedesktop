@@ -117,6 +117,27 @@ describe("dual-domain production dashboard", () => {
   });
 });
 
+describe("support invitation enhancements", () => {
+  it("allows the same-origin asset on the initial page and expiry validation responses", async () => {
+    const { app, login } = await fixture({ supportEnabled: true });
+    const { cookie } = await login();
+    const page = await app.inject({ url: "/dashboard/support", headers: { cookie } });
+    const payload = { csrf: csrfFrom(page.body), label: "Support", inviteDuration: "8", inviteDurationUnit: "days" };
+    const invalid = await app.inject({ method: "POST", url: "/dashboard/support/create", headers: { cookie }, payload });
+    const created = await app.inject({ method: "POST", url: "/dashboard/support/create", headers: { cookie }, payload: { ...payload, inviteDuration: "7" } });
+    expect(page.statusCode).toBe(200);
+    expect(invalid.statusCode).toBe(400);
+    expect(created.statusCode).toBe(200);
+    for (const response of [page, invalid, created]) {
+      expect(response.body).toContain('<script src="/dashboard/assets/ui.js" defer></script>');
+      expect(response.headers["content-security-policy"]).toBe(
+        "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+      );
+      expect(response.headers["cache-control"]).toBe("no-store");
+    }
+  });
+});
+
 describe("Bridge UI routes", () => {
 it("sets the language cookie and returns to a safe path", async () => {
   const { app } = await fixture();

@@ -34,9 +34,10 @@ describe("support invitation duration", () => {
     }
     const unit = form?.match(/<select\b[^>]*name="inviteDurationUnit"[^>]*>[\s\S]*?<\/select>/)?.[0];
     expect(unit).toContain('required');
-    expect(unit).toContain(`<option value="minutes" selected>${minutes}</option>`);
-    expect(unit).toContain(`<option value="hours">${hours}</option>`);
-    expect(unit).toContain(`<option value="days">${days}</option>`);
+    expect(unit).toContain('data-duration-input="support-invite-duration"');
+    expect(unit).toContain(`<option value="minutes" data-max="10080" selected>${minutes}</option>`);
+    expect(unit).toContain(`<option value="hours" data-max="168">${hours}</option>`);
+    expect(unit).toContain(`<option value="days" data-max="7">${days}</option>`);
     expect(form).toContain('id="support-invite-duration-hint"');
     expect(form).not.toContain('role="alert"');
   });
@@ -52,14 +53,32 @@ describe("support invitation duration", () => {
     expect(label).toContain('value="Ticket &quot;A&quot; &lt;customer&gt;"');
     const duration = page.match(/<input\b[^>]*name="inviteDuration"[^>]*>/)?.[0];
     expect(duration).toContain('value="8"');
+    expect(duration).toContain('max="7"');
     expect(duration).toContain('aria-invalid="true"');
     expect(duration).toContain('aria-describedby="support-invite-duration-hint support-invite-duration-error"');
     const unit = page.match(/<select\b[^>]*name="inviteDurationUnit"[^>]*>[\s\S]*?<\/select>/)?.[0];
     expect(unit).toContain('aria-invalid="true"');
-    expect(unit).toContain('<option value="days" selected>');
+    expect(unit).toContain('<option value="days" data-max="7" selected>');
     const error = page.match(/<[^>]+id="support-invite-duration-error"[^>]*>[\s\S]*?<\/p>/)?.[0];
     expect(error).toContain(range);
     expect(page).toContain('role="alert"');
+  });
+
+  it.each([
+    ["minutes", "10080", "10081"],
+    ["hours", "168", "169"],
+    ["days", "7", "8"],
+  ])("renders the %s limit consistently before and after validation", (unit, max, value) => {
+    for (const expiryError of [false, true]) {
+      const page = renderSupportDashboard(ctx, [], new Map(), true, {
+        inviteDuration: value, inviteDurationUnit: unit, expiryError,
+      });
+      const duration = page.match(/<input\b[^>]*name="inviteDuration"[^>]*>/)?.[0];
+      for (const attribute of ['min="1"', `max="${max}"`, 'step="1"', `value="${value}"`]) {
+        expect(duration).toContain(attribute);
+      }
+      expect(page).toContain(`<option value="${unit}" data-max="${max}" selected>`);
+    }
   });
 
   it("requires a unit to be chosen again after an unsupported submission", () => {
@@ -69,7 +88,7 @@ describe("support invitation duration", () => {
     const unit = page.match(/<select\b[^>]*name="inviteDurationUnit"[^>]*>[\s\S]*?<\/select>/)?.[0];
     expect(unit).toBeDefined();
     expect(unit).toContain('<option value="" disabled selected>Choose a unit</option>');
-    expect(unit).not.toContain('<option value="minutes" selected>');
+    expect(unit).not.toContain('<option value="minutes" data-max="10080" selected>');
     expect(page).not.toContain('weeks" autofocus');
   });
 

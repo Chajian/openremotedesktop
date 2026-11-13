@@ -7,7 +7,11 @@ import type { DownloadSource } from "../installer.js";
 import { installerOperatingSystems, installerPlatforms, type InstallerOS } from "../platforms.js";
 
 const systems = installerOperatingSystems.map(os => ({os, ...installerPlatforms[os]}));
-const durationUnits = ["minutes", "hours", "days"] as const;
+const durationUnits = [
+  { value: "minutes", max: MAX_SUPPORT_INVITE_MINUTES },
+  { value: "hours", max: MAX_SUPPORT_INVITE_MINUTES / 60 },
+  { value: "days", max: MAX_SUPPORT_INVITE_MINUTES / (24 * 60) },
+] as const;
 
 export interface SupportFormState {
   label?: string;
@@ -21,8 +25,7 @@ export function renderSupportDashboard(
   devices: ReadonlyMap<string, string>, enabled: boolean,
   formState: SupportFormState = {},
 ): string {
-  const selectedUnit = formState.inviteDurationUnit ?? "minutes";
-  const hasValidUnit = durationUnits.some(unit => unit === selectedUnit);
+  const selectedUnit = durationUnits.find(unit => unit.value === (formState.inviteDurationUnit ?? "minutes"));
   const durationDescription = formState.expiryError
     ? "support-invite-duration-hint support-invite-duration-error" : "support-invite-duration-hint";
   const maxDays = MAX_SUPPORT_INVITE_MINUTES / (24 * 60);
@@ -36,14 +39,14 @@ export function renderSupportDashboard(
          placeholder="${t(ctx.locale, "support.namePlaceholder")}" required></div>
       <div class="row" style="align-items:flex-end;flex-wrap:wrap;margin-top:16px;max-width:440px">
         <div class="field" style="flex:1;min-width:140px"><label for="support-invite-duration">${t(ctx.locale, "support.inviteDuration")}</label>
-          <input class="input" name="inviteDuration" id="support-invite-duration" type="number" min="1" max="${MAX_SUPPORT_INVITE_MINUTES}" step="1"
+          <input class="input" name="inviteDuration" id="support-invite-duration" type="number" min="1" max="${selectedUnit?.max ?? MAX_SUPPORT_INVITE_MINUTES}" step="1"
             value="${formState.inviteDuration ?? DEFAULT_SUPPORT_INVITE_MINUTES}" required
             aria-describedby="${durationDescription}" aria-invalid="${formState.expiryError ? "true" : "false"}"></div>
         <div class="field" style="flex:1;min-width:140px"><label for="support-invite-duration-unit">${t(ctx.locale, "support.inviteDurationUnit")}</label>
-          <select class="input" name="inviteDurationUnit" id="support-invite-duration-unit" required
+          <select class="input" name="inviteDurationUnit" id="support-invite-duration-unit" data-duration-input="support-invite-duration" required
             aria-describedby="${durationDescription}" aria-invalid="${formState.expiryError ? "true" : "false"}">
-            <option value="" disabled${hasValidUnit ? null : html` selected`}>${t(ctx.locale, "support.chooseDurationUnit")}</option>
-            ${durationUnits.map(unit => html`<option value="${unit}"${selectedUnit === unit ? html` selected` : null}>${t(ctx.locale, `support.inviteDurationUnit.${unit}`)}</option>`)}
+            <option value="" disabled${selectedUnit ? null : html` selected`}>${t(ctx.locale, "support.chooseDurationUnit")}</option>
+            ${durationUnits.map(unit => html`<option value="${unit.value}" data-max="${unit.max}"${selectedUnit === unit ? html` selected` : null}>${t(ctx.locale, `support.inviteDurationUnit.${unit.value}`)}</option>`)}
           </select></div>
       </div>
       <p class="fine" id="support-invite-duration-hint" style="margin:8px 0 12px">${t(ctx.locale, "support.inviteDurationHint", {days: maxDays})}</p>
