@@ -86,7 +86,11 @@ async function durationDom(state: SupportFormState = {}) {
   const inputTag = page.match(/<input\b[^>]*name="inviteDuration"[^>]*>/)?.[0] ?? "";
   const selectTag = page.match(/<select\b[^>]*name="inviteDurationUnit"[^>]*>[\s\S]*?<\/select>/)?.[0] ?? "";
   const attribute = (tag: string, name: string) => tag.match(new RegExp(name + '="([^"]*)"'))?.[1] ?? "";
-  const input = new Element("INPUT"), unit = new Element("SELECT");
+  const input = new Element("INPUT"), unit = new Element("SELECT"), form = new Element("FORM");
+  const formTag = page.match(/<form\b[^>]*action="\/dashboard\/support\/create"[^>]*>/)?.[0] ?? "";
+  const serverValidationOnly = /\bnovalidate\b/.test(formTag);
+  if (serverValidationOnly) form.setAttribute("novalidate", "");
+  form.append(input, unit);
   input.id = attribute(inputTag, "id"); input.value = attribute(inputTag, "value");
   input.min = attribute(inputTag, "min"); input.max = attribute(inputTag, "max"); input.step = attribute(inputTag, "step");
   unit.dataset.durationInput = attribute(selectTag, "data-duration-input");
@@ -104,7 +108,7 @@ async function durationDom(state: SupportFormState = {}) {
     querySelectorAll: (selector: string) => selector === "select[data-duration-input]" && unit.dataset.durationInput ? [unit] : [],
     getElementById: (id: string) => id === input.id ? input : null,
   } });
-  return { input, unit };
+  return { input, unit, form, serverValidationOnly };
 }
 
 describe("dashboard enhancement asset", () => {
@@ -150,6 +154,13 @@ describe("dashboard enhancement asset", () => {
     for (const step of [1, 2, 3] as const) expect(renderConnect(ctx, { step, os: "win", error: null, values: { userCode: "", friendlyName: "" } })).toContain(script);
     expect(renderLogin({ locale: "en", returnTo: "/dashboard", csrf: "x", githubEnabled: true, error: null })).not.toContain("<script");
     expect(renderConsentPage({ returnTo: "/oauth/authorize?x=1", csrf: "x", clientId: "x", redirectUri: "https://client.example/cb", scope: "mcp offline_access" })).not.toContain("<script");
+  });
+  it("enables native validation only when unit synchronization is available", async () => {
+    const d = await durationDom({ inviteDuration: "8", inviteDurationUnit: "days", expiryError: true });
+    expect(d.serverValidationOnly).toBe(true);
+    expect(d.form.getAttribute("novalidate")).toBeNull();
+    expect(d.input.max).toBe("7");
+    expect(d.input.value).toBe("8");
   });
   it("updates duration limits without replacing the typed value and reports an overflow", async () => {
     const d = await durationDom({ inviteDuration: "169" });

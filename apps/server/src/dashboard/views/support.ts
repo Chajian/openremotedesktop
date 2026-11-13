@@ -32,7 +32,7 @@ export function renderSupportDashboard(
   const form = html`<section class="card card-pad" style="margin-bottom:24px">
     <h2>${t(ctx.locale, "support.createTitle")}</h2>
     <p class="muted">${t(ctx.locale, "support.createLead")}</p>
-    <form method="post" action="/dashboard/support/create" style="margin-top:16px">
+    <form method="post" action="/dashboard/support/create" novalidate style="margin-top:16px">
       ${hiddenInput("csrf", ctx.csrf)}
       <div class="field"><label for="support-label">${t(ctx.locale, "support.name")}</label>
         <input class="input" name="label" id="support-label" maxlength="80" value="${formState.label ?? ""}"

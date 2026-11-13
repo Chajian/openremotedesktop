@@ -4,6 +4,8 @@ import type { FastifyInstance } from "fastify";
  * Progressive enhancement only: the native forms remain usable without JavaScript.
  * Polling refreshes status and recovery controls together without interrupting edits;
  * network interruptions leave the page usable. Only indentation is stripped when served.
+ * Invite forms enable native validation once their unit-dependent maximum can update;
+ * without this enhancement, the server validates submissions so unit changes stay usable.
  */
 export const UI_SCRIPT = String.raw`(() => {
   const all = (selector) => Array.from(document.querySelectorAll(selector));
@@ -65,6 +67,7 @@ export const UI_SCRIPT = String.raw`(() => {
     };
     unit.addEventListener('change',update);
     input.addEventListener('input',update);
+    input.form?.removeAttribute('novalidate');
   });
   const clean = (text) => String(text).toUpperCase().replace(/[^ABCDEFGHJKLMNPQRSTUVWXYZ23456789]/g, '');
   all('input[data-code-input]').forEach((input) => {
