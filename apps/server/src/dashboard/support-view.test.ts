@@ -17,6 +17,76 @@ const customer: CustomerSupportOptions = {
   label: "Customer", expiresAt: 301000,
 };
 
+describe("support invitation duration", () => {
+  it.each([
+    ["en", "Invitation valid for", "Minutes", "Hours", "Days"],
+    ["zh-CN", "邀请有效时长", "分钟", "小时", "天"],
+  ] as const)("renders a localized, directly submittable duration in %s", (locale, label, minutes, hours, days) => {
+    const page = renderSupportDashboard({...ctx, locale}, [], new Map(), true);
+    const form = page.match(/<form\b[^>]*action="\/dashboard\/support\/create"[^>]*>[\s\S]*?<\/form>/)?.[0];
+    expect(form).toBeDefined();
+    expect(form).toContain('method="post"');
+    expect(form).toContain('<input type="hidden" name="csrf" value="test">');
+    expect(form).toContain(`<label for="support-invite-duration">${label}</label>`);
+    const duration = form?.match(/<input\b[^>]*name="inviteDuration"[^>]*>/)?.[0];
+    for (const attribute of ['type="number"', 'min="1"', 'max="10080"', 'step="1"', 'value="5"', 'required', 'aria-describedby="support-invite-duration-hint"']) {
+      expect(duration).toContain(attribute);
+    }
+    const unit = form?.match(/<select\b[^>]*name="inviteDurationUnit"[^>]*>[\s\S]*?<\/select>/)?.[0];
+    expect(unit).toContain('required');
+    expect(unit).toContain(`<option value="minutes" selected>${minutes}</option>`);
+    expect(unit).toContain(`<option value="hours">${hours}</option>`);
+    expect(unit).toContain(`<option value="days">${days}</option>`);
+    expect(form).toContain('id="support-invite-duration-hint"');
+    expect(form).not.toContain('role="alert"');
+  });
+
+  it.each([
+    ["en", "1 minute to 7 days"],
+    ["zh-CN", "1 分钟至 7 天"],
+  ] as const)("preserves submitted values and exposes a localized validation error in %s", (locale, range) => {
+    const page = renderSupportDashboard({...ctx, locale}, [], new Map(), true, {
+      label: 'Ticket "A" <customer>', inviteDuration: "8", inviteDurationUnit: "days", expiryError: true,
+    });
+    const label = page.match(/<input\b[^>]*name="label"[^>]*>/)?.[0];
+    expect(label).toContain('value="Ticket &quot;A&quot; &lt;customer&gt;"');
+    const duration = page.match(/<input\b[^>]*name="inviteDuration"[^>]*>/)?.[0];
+    expect(duration).toContain('value="8"');
+    expect(duration).toContain('aria-invalid="true"');
+    expect(duration).toContain('aria-describedby="support-invite-duration-hint support-invite-duration-error"');
+    const unit = page.match(/<select\b[^>]*name="inviteDurationUnit"[^>]*>[\s\S]*?<\/select>/)?.[0];
+    expect(unit).toContain('aria-invalid="true"');
+    expect(unit).toContain('<option value="days" selected>');
+    const error = page.match(/<[^>]+id="support-invite-duration-error"[^>]*>[\s\S]*?<\/p>/)?.[0];
+    expect(error).toContain(range);
+    expect(page).toContain('role="alert"');
+  });
+
+  it("requires a unit to be chosen again after an unsupported submission", () => {
+    const page = renderSupportDashboard(ctx, [], new Map(), true, {
+      label: "Customer", inviteDuration: "2", inviteDurationUnit: 'weeks" autofocus', expiryError: true,
+    });
+    const unit = page.match(/<select\b[^>]*name="inviteDurationUnit"[^>]*>[\s\S]*?<\/select>/)?.[0];
+    expect(unit).toBeDefined();
+    expect(unit).toContain('<option value="" disabled selected>Choose a unit</option>');
+    expect(unit).not.toContain('<option value="minutes" selected>');
+    expect(page).not.toContain('weeks" autofocus');
+  });
+
+  it("shows the saved expiry belonging to each invitation in history", () => {
+    const page = renderSupportDashboard(ctx, [
+      {...base, label: "First customer", inviteExpiresAt: new Date(2026, 0, 2, 12, 30).getTime()},
+      {...base, id: "second", label: "Second customer", inviteExpiresAt: new Date(2026, 0, 3, 14, 0).getTime()},
+    ], new Map(), true);
+    const cards = page.match(/<article\b[^>]*>[\s\S]*?<\/article>/g);
+    expect(cards).toHaveLength(2);
+    expect(cards?.[0]).toContain("First customer");
+    expect(cards?.[0]).toContain("Invitation expires: Jan 2, 2026, 12:30 PM");
+    expect(cards?.[1]).toContain("Second customer");
+    expect(cards?.[1]).toContain("Invitation expires: Jan 3, 2026, 02:00 PM");
+  });
+});
+
 describe("support history device link", () => {
   it("shows download choices only with the released installer, without adding a login", () => {
     const accelerated = renderCustomerSupport({...customer, installCommand: "verified-command", downloadSource: "npmmirror"});

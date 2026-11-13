@@ -4,7 +4,8 @@ import type { DeviceRepository } from "../devices/device-repository.js";
 import { DeviceCredentials } from "../devices/device-credentials.js";
 import type { DeviceManagementService } from "../devices/device-management-service.js";
 
-const INVITE_TTL_MS = 5 * 60_000;
+export const DEFAULT_SUPPORT_INVITE_MINUTES = 5;
+export const MAX_SUPPORT_INVITE_MINUTES = 7 * 24 * 60;
 // Shared joined-and-not-ended predicate for both public navigation queries.
 const ACTIVE_JOINED_SUPPORT = `FROM support_sessions s
   JOIN devices d ON d.id = s.device_id
@@ -53,21 +54,26 @@ export class SupportService {
     };
   }
 
-  create(ownerId: string, label: string): { session: SupportSession; invite: string } {
+  create(ownerId: string, label: string, expiresInMinutes = DEFAULT_SUPPORT_INVITE_MINUTES): { session: SupportSession; invite: string } {
+    if (!Number.isSafeInteger(expiresInMinutes) || expiresInMinutes < 1 ||
+        expiresInMinutes > MAX_SUPPORT_INVITE_MINUTES) {
+      throw new RangeError("Invitation validity must be a whole number of minutes from 1 to 10080");
+    }
     const safe = label.trim().slice(0, 80) || "Customer support";
     const createdAt = this.now();
+    const inviteExpiresAt = createdAt + expiresInMinutes * 60_000;
     const invite = randomBytes(24).toString("base64url");
     const id = randomUUID();
     this.db.prepare(
       `INSERT INTO support_sessions
        (id, owner_id, label, invite_hash, created_at, invite_expires_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(id, ownerId, safe, hash(invite), createdAt, createdAt + INVITE_TTL_MS);
+    ).run(id, ownerId, safe, hash(invite), createdAt, inviteExpiresAt);
     return {
       invite,
       session: this.mapped({
         id, owner_id: ownerId, label: safe, created_at: createdAt,
-        invite_expires_at: createdAt + INVITE_TTL_MS, joined_at: null,
+        invite_expires_at: inviteExpiresAt, joined_at: null,
         device_id: null, ended_at: null, ended_reason: null,
       }),
     };

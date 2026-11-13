@@ -29,6 +29,106 @@ const inviteFrom = (html:string) =>
   /https:\/\/remote\.example\.com\/support\/invite\/([A-Za-z0-9_-]{32})/.exec(html)?.[1] ?? "";
 const supportPlatforms = ["win32", "darwin", "linux"] as const;
 
+describe("per-invitation expiry", () => {
+  it.each([
+    ["1", "minutes", 60_000],
+    ["30", "minutes", 1_800_000],
+    ["2", "hours", 7_200_000],
+    ["1", "days", 86_400_000],
+    ["7", "days", 604_800_000],
+  ])("persists a creator's %s %s selection through the invitation form", async (duration, unit, expectedMs) => {
+    const f = await fixture();
+    try {
+      const page = await f.app.inject({url:"/dashboard/support", headers:{cookie:f.cookie}});
+      const created = await f.app.inject({method:"POST", url:"/dashboard/support/create",
+        headers:{cookie:f.cookie, "content-type":"application/x-www-form-urlencoded"},
+        payload:new URLSearchParams({csrf:csrf(page.body), label:"Custom expiry",
+          inviteDuration:String(duration), inviteDurationUnit:String(unit)}).toString()});
+      expect(created.statusCode).toBe(200);
+      const saved = f.db.prepare("SELECT created_at, invite_expires_at FROM support_sessions").get() as {
+        created_at:number; invite_expires_at:number;
+      };
+      expect(saved.invite_expires_at - saved.created_at).toBe(expectedMs);
+      const preview = await f.app.inject({url:`/api/support/invite/${inviteFrom(created.body)}`});
+      expect(preview.statusCode).toBe(200);
+      expect(preview.json().inviteExpiresAt).toBe(saved.invite_expires_at);
+    } finally {await f.dispose();}
+  });
+
+  it("rejects invalid expiry fields without creating an invitation and keeps the form available", async () => {
+    const f = await fixture();
+    try {
+      const page = await f.app.inject({url:"/dashboard/support", headers:{cookie:f.cookie}});
+      const invalid:Record<string,unknown>[] = [
+        {inviteDuration:"0", inviteDurationUnit:"minutes"},
+        {inviteDuration:"-1", inviteDurationUnit:"minutes"},
+        {inviteDuration:"1.5", inviteDurationUnit:"hours"},
+        {inviteDuration:"", inviteDurationUnit:"minutes"},
+        {inviteDuration:"NaN", inviteDurationUnit:"minutes"},
+        {inviteDuration:"0x10", inviteDurationUnit:"minutes"},
+        {inviteDuration:"8", inviteDurationUnit:"days"},
+        {inviteDuration:"9007199254740993", inviteDurationUnit:"hours"},
+        {inviteDuration:"30", inviteDurationUnit:"weeks"},
+        {inviteDuration:["30"], inviteDurationUnit:"minutes"},
+        {inviteDuration:"30", inviteDurationUnit:["minutes"]},
+        {inviteDuration:"30"},
+        {inviteDurationUnit:"minutes"},
+      ];
+      for (const fields of invalid) {
+        const response = await f.app.inject({method:"POST", url:"/dashboard/support/create",
+          headers:{cookie:f.cookie}, payload:{csrf:csrf(page.body), label:"Keep this label", ...fields}});
+        expect(response.statusCode, JSON.stringify(fields)).toBe(400);
+        expect(response.body).toContain('action="/dashboard/support/create"');
+        expect(response.body).toContain('value="Keep this label"');
+      }
+      expect(f.db.prepare("SELECT COUNT(*) AS count FROM support_sessions").get()).toEqual({count:0});
+    } finally {await f.dispose();}
+  });
+
+  it("keeps saved per-link deadlines across service recreation and rejects joining at the deadline", () => {
+    const db = createDatabase(":memory:");
+    try {
+      db.prepare("INSERT INTO owner (id,password_hash,created_at) VALUES ('owner','fixture',0)").run();
+      const devices = new DeviceRepository(db);
+      const registry = new ConnectionRegistry();
+      const management = new DeviceManagementService(devices,registry,new RequestBroker(registry));
+      let now = 1_000_000;
+      const service = new SupportService(db,devices,management,()=>now);
+      const short = service.create("owner","One minute",1);
+      const long = service.create("owner","Two hours",120);
+      const legacy = service.create("owner","Default");
+      expect(short.session.inviteExpiresAt).toBe(1_060_000);
+      expect(long.session.inviteExpiresAt).toBe(8_200_000);
+      expect(legacy.session.inviteExpiresAt).toBe(1_300_000);
+      now = 1_059_999;
+      expect(service.preview(short.invite).inviteExpiresAt).toBe(1_060_000);
+      now = 1_060_000;
+      const reopened = new SupportService(db,devices,management,()=>now);
+      expect(() => reopened.join(short.invite,"Expired customer","win32")).toThrow(SupportInviteExpiredError);
+      expect(reopened.preview(long.invite).inviteExpiresAt).toBe(8_200_000);
+      expect(reopened.preview(legacy.invite).inviteExpiresAt).toBe(1_300_000);
+      now = 8_200_000;
+      expect(() => reopened.join(long.invite,"Expired customer","win32")).toThrow(SupportInviteExpiredError);
+      expect(devices.listOwnedDevices("owner")).toEqual([]);
+    } finally {db.close();}
+  });
+
+  it("validates direct service durations before writing an invitation", () => {
+    const db = createDatabase(":memory:");
+    try {
+      db.prepare("INSERT INTO owner (id,password_hash,created_at) VALUES ('owner','fixture',0)").run();
+      const devices = new DeviceRepository(db);
+      const registry = new ConnectionRegistry();
+      const service = new SupportService(db,devices,
+        new DeviceManagementService(devices,registry,new RequestBroker(registry)));
+      for (const minutes of [0,-1,1.5,Number.NaN,Number.POSITIVE_INFINITY,10_081]) {
+        expect(() => service.create("owner","Invalid",minutes)).toThrow();
+      }
+      expect(db.prepare("SELECT COUNT(*) AS count FROM support_sessions").get()).toEqual({count:0});
+    } finally {db.close();}
+  });
+});
+
 describe("temporary support sessions", () => {
   it("downloads an anonymous launcher without consuming the invite, and rejects unavailable invites", async () => {
     const f = await fixture(true, true, "0.1.6");

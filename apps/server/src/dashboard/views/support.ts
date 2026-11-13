@@ -1,25 +1,53 @@
-import type { SupportSession } from "../../support/support-service.js";
+import { DEFAULT_SUPPORT_INVITE_MINUTES, MAX_SUPPORT_INVITE_MINUTES, type SupportSession } from "../../support/support-service.js";
 import { html, type SafeHtml } from "../ui/html.js";
-import { appDocument, pageHead, hiddenInput, soloDocument, type ShellContext } from "../ui/components.js";
+import { appDocument, pageHead, hiddenInput, soloDocument, callout, type ShellContext } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
 import { t, type Locale, formatDateTime } from "../ui/i18n.js";
 import type { DownloadSource } from "../installer.js";
 import { installerOperatingSystems, installerPlatforms, type InstallerOS } from "../platforms.js";
 
 const systems = installerOperatingSystems.map(os => ({os, ...installerPlatforms[os]}));
+const durationUnits = ["minutes", "hours", "days"] as const;
+
+export interface SupportFormState {
+  label?: string;
+  inviteDuration?: string;
+  inviteDurationUnit?: string;
+  expiryError?: boolean;
+}
 
 export function renderSupportDashboard(
   ctx: ShellContext, sessions: SupportSession[],
   devices: ReadonlyMap<string, string>, enabled: boolean,
+  formState: SupportFormState = {},
 ): string {
+  const selectedUnit = formState.inviteDurationUnit ?? "minutes";
+  const hasValidUnit = durationUnits.some(unit => unit === selectedUnit);
+  const durationDescription = formState.expiryError
+    ? "support-invite-duration-hint support-invite-duration-error" : "support-invite-duration-hint";
+  const maxDays = MAX_SUPPORT_INVITE_MINUTES / (24 * 60);
   const form = html`<section class="card card-pad" style="margin-bottom:24px">
     <h2>${t(ctx.locale, "support.createTitle")}</h2>
     <p class="muted">${t(ctx.locale, "support.createLead")}</p>
     <form method="post" action="/dashboard/support/create" style="margin-top:16px">
       ${hiddenInput("csrf", ctx.csrf)}
       <div class="field"><label for="support-label">${t(ctx.locale, "support.name")}</label>
-        <input class="input" name="label" id="support-label" maxlength="80"
+        <input class="input" name="label" id="support-label" maxlength="80" value="${formState.label ?? ""}"
          placeholder="${t(ctx.locale, "support.namePlaceholder")}" required></div>
+      <div class="row" style="align-items:flex-end;flex-wrap:wrap;margin-top:16px;max-width:440px">
+        <div class="field" style="flex:1;min-width:140px"><label for="support-invite-duration">${t(ctx.locale, "support.inviteDuration")}</label>
+          <input class="input" name="inviteDuration" id="support-invite-duration" type="number" min="1" max="${MAX_SUPPORT_INVITE_MINUTES}" step="1"
+            value="${formState.inviteDuration ?? DEFAULT_SUPPORT_INVITE_MINUTES}" required
+            aria-describedby="${durationDescription}" aria-invalid="${formState.expiryError ? "true" : "false"}"></div>
+        <div class="field" style="flex:1;min-width:140px"><label for="support-invite-duration-unit">${t(ctx.locale, "support.inviteDurationUnit")}</label>
+          <select class="input" name="inviteDurationUnit" id="support-invite-duration-unit" required
+            aria-describedby="${durationDescription}" aria-invalid="${formState.expiryError ? "true" : "false"}">
+            <option value="" disabled${hasValidUnit ? null : html` selected`}>${t(ctx.locale, "support.chooseDurationUnit")}</option>
+            ${durationUnits.map(unit => html`<option value="${unit}"${selectedUnit === unit ? html` selected` : null}>${t(ctx.locale, `support.inviteDurationUnit.${unit}`)}</option>`)}
+          </select></div>
+      </div>
+      <p class="fine" id="support-invite-duration-hint" style="margin:8px 0 12px">${t(ctx.locale, "support.inviteDurationHint", {days: maxDays})}</p>
+      ${formState.expiryError ? callout("err", null, html`<p id="support-invite-duration-error">${t(ctx.locale, "support.inviteDurationError", {days: maxDays})}</p>`) : null}
       <button class="btn btn-primary" type="submit" style="margin-top:12px">${t(ctx.locale, "support.create")}</button>
     </form>
   </section>`;
@@ -28,6 +56,7 @@ export function renderSupportDashboard(
         <h3>${s.label}</h3><span class="chip">${t(ctx.locale, `support.state.${s.state}`)}</span>
       </div>
       <p class="muted">${t(ctx.locale, "support.createdAt")}: ${formatDateTime(ctx.locale,s.createdAt)}</p>
+      <p class="muted">${t(ctx.locale, "support.inviteExpiry")}: ${formatDateTime(ctx.locale,s.inviteExpiresAt)}</p>
       ${s.deviceId ? (s.state === "active" && s.deviceAccessible
         ? html`<a href="/dashboard/devices/${encodeURIComponent(s.deviceId)}">${t(ctx.locale,"support.device")}: ${s.deviceId.slice(0,8)} (${devices.get(s.deviceId) ?? "OFFLINE"})</a>`
         : html`<span class="muted">${t(ctx.locale,"support.device")}: ${s.deviceId.slice(0,8)} (${t(ctx.locale,"support.deviceRemoved")})</span>`)

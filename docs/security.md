@@ -127,8 +127,12 @@ the source-checkout command as developer-only. The original published Agent
 version must not be misrepresented as supporting this command.
 
 An authenticated account owner creates a session. The one-time invitation is
-192 bits of randomness, stored only as its SHA-256 hash, expires after five
-minutes, and can be redeemed once without customer account creation. The
+192 bits of randomness, stored only as its SHA-256 hash, and can be redeemed
+once without customer account creation. The creator chooses a positive whole
+number of minutes, hours or days for each invitation, from one minute through
+seven days in total; the default is five minutes. The expiry is saved separately
+for each invitation and starts when the link is generated, including download
+and installation time. Viewing or downloading the link does not extend it. The
 customer's Agent must explicitly approve full tool access before redeeming it.
 Manual commands require `YES`. Downloaded launchers require Agent 0.1.6 or newer
 and pass `--accept-support`: running the file is the explicit consent action,
