@@ -1,3 +1,7 @@
+import {existsSync, mkdtempSync, rmSync} from "node:fs";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import Fastify from "fastify";
 import {describe, expect, it} from "vitest";
 import {buildApp} from "../app.js";
 import {createDatabase} from "../db/database.js";
@@ -10,6 +14,7 @@ import {ConnectionRegistry} from "../relay/connection-registry.js";
 import {RequestBroker} from "../relay/request-broker.js";
 import {DeviceManagementService} from "../devices/device-management-service.js";
 import {SupportAlreadyJoinedError, SupportInviteExpiredError, SupportNotFoundError, SupportService} from "./support-service.js";
+import {registerSupportRoutes} from "./routes.js";
 
 async function fixture(enabled = true, agentInstallEnabled = false, version = "0.1.4") {
   const db = createDatabase(":memory:");
@@ -23,6 +28,22 @@ async function fixture(enabled = true, agentInstallEnabled = false, version = "0
   const cookie = String(login.headers["set-cookie"]).split(";")[0]!;
   const dispose = async () => {await app.close();db.close();};
   return {app,db,cookie,ownerId:owner.id,dispose};
+}
+function timedSupportFixture(now: () => number, databasePath = ":memory:") {
+  const db = createDatabase(databasePath);
+  const devices = new DeviceRepository(db);
+  const registry = new ConnectionRegistry();
+  const management = new DeviceManagementService(devices,registry,new RequestBroker(registry));
+  const service = new SupportService(db,devices,management,now);
+  const app = Fastify({logger:false});
+  registerSupportRoutes(app,service,{databasePath,environment:"test",
+    publicBaseUrl:new URL("https://remote.example.com"),supportEnabled:true,
+    agentInstallEnabled:true,supportAgentVersion:"0.1.6"});
+  const dispose = async () => {
+    try {await app.close();}
+    finally {db.close();}
+  };
+  return {app,db,devices,service,dispose};
 }
 const csrf = (html:string) => /name="csrf" value="([^"]+)"/.exec(html)?.[1] ?? "";
 const inviteFrom = (html:string) =>
@@ -52,6 +73,63 @@ describe("per-invitation expiry", () => {
       const preview = await f.app.inject({url:`/api/support/invite/${inviteFrom(created.body)}`});
       expect(preview.statusCode).toBe(200);
       expect(preview.json().inviteExpiresAt).toBe(saved.invite_expires_at);
+    } finally {await f.dispose();}
+  });
+
+  it("persists the five-minute default when a legacy create POST omits both duration fields", async () => {
+    const f = await fixture();
+    try {
+      const page = await f.app.inject({url:"/dashboard/support",headers:{cookie:f.cookie}});
+      const created = await f.app.inject({method:"POST",url:"/dashboard/support/create",
+        headers:{cookie:f.cookie,"content-type":"application/x-www-form-urlencoded"},
+        payload:new URLSearchParams({csrf:csrf(page.body),label:"Legacy invitation"}).toString()});
+      expect(created.statusCode).toBe(200);
+      expect(inviteFrom(created.body)).toMatch(/^[A-Za-z0-9_-]{32}$/);
+      const saved = f.db.prepare("SELECT created_at, invite_expires_at FROM support_sessions").get() as {
+        created_at:number; invite_expires_at:number;
+      };
+      expect(saved.invite_expires_at - saved.created_at).toBe(300_000);
+      expect(f.db.prepare("SELECT COUNT(*) AS count FROM support_sessions").get()).toEqual({count:1});
+    } finally {await f.dispose();}
+  });
+
+  it("redeems a two-hour invite after six minutes only once and keeps the joined session active past expiry", async () => {
+    let now = 1_000_000;
+    const f = timedSupportFixture(()=>now);
+    try {
+      f.db.prepare("INSERT INTO owner (id,password_hash,created_at) VALUES ('owner','fixture',0)").run();
+      const {invite,session} = f.service.create("owner","Two hours",120);
+      expect(session.createdAt).toBe(1_000_000);
+      expect(session.inviteExpiresAt).toBe(8_200_000);
+
+      now = 1_360_000;
+      const joined = await f.app.inject({method:"POST",url:"/api/support/join",
+        payload:{invite,deviceName:"Customer PC",platform:"win32"}});
+      expect(joined.statusCode).toBe(201);
+      const {deviceId,refreshCredential,sessionId} = joined.json();
+      expect(sessionId).toBe(session.id);
+      expect(f.devices.findById(deviceId)).toMatchObject({ownerId:"owner",name:"Customer PC"});
+      const saved = {created_at:1_000_000,invite_expires_at:8_200_000,joined_at:1_360_000,device_id:deviceId};
+      expect(f.db.prepare("SELECT created_at, invite_expires_at, joined_at, device_id FROM support_sessions WHERE id=?")
+        .get(session.id)).toEqual(saved);
+      expect(new DeviceCredentials(f.db).activeDeviceId(refreshCredential)).toBe(deviceId);
+
+      const reused = await f.app.inject({method:"POST",url:"/api/support/join",
+        payload:{invite,deviceName:"Second customer",platform:"win32"}});
+      expect(reused.statusCode).toBe(409);
+      expect(reused.json()).toEqual({error:"INVITE_ALREADY_USED"});
+      expect((await f.app.inject({url:`/api/support/invite/${invite}`})).statusCode).toBe(409);
+      expect(f.devices.listOwnedDevices("owner")).toHaveLength(1);
+      expect(f.db.prepare("SELECT COUNT(*) AS count FROM device_credentials").get()).toEqual({count:1});
+
+      now = 8_200_001;
+      const status = await f.app.inject({method:"POST",url:"/api/support/status",payload:{refreshCredential}});
+      expect(status.statusCode).toBe(200);
+      expect(status.json()).toEqual({state:"active"});
+      expect(f.service.listOwned("owner")[0]).toMatchObject({id:session.id,state:"active",deviceAccessible:true});
+      expect(new DeviceCredentials(f.db).activeDeviceId(refreshCredential)).toBe(deviceId);
+      expect(f.db.prepare("SELECT created_at, invite_expires_at, joined_at, device_id FROM support_sessions WHERE id=?")
+        .get(session.id)).toEqual(saved);
     } finally {await f.dispose();}
   });
 
@@ -111,6 +189,71 @@ describe("per-invitation expiry", () => {
       expect(() => reopened.join(long.invite,"Expired customer","win32")).toThrow(SupportInviteExpiredError);
       expect(devices.listOwnedDevices("owner")).toEqual([]);
     } finally {db.close();}
+  });
+
+  it("preserves original deadlines across preview, download, and a real SQLite close and reopen", async () => {
+    const directory = mkdtempSync(join(tmpdir(),"odr-support-expiry-"));
+    const databasePath = join(directory,"support.sqlite");
+    let now = 1_000_000;
+    let f:ReturnType<typeof timedSupportFixture> | undefined;
+    try {
+      f = timedSupportFixture(()=>now,databasePath);
+      f.db.prepare("INSERT INTO owner (id,password_hash,created_at) VALUES ('owner','fixture',0)").run();
+      const short = f.service.create("owner","One minute",1);
+      const long = f.service.create("owner","Two hours",120);
+      const legacy = f.service.create("owner","Default");
+      expect(f.db.prepare("SELECT label, created_at, invite_expires_at FROM support_sessions ORDER BY invite_expires_at").all())
+        .toEqual([
+          {label:"One minute",created_at:1_000_000,invite_expires_at:1_060_000},
+          {label:"Default",created_at:1_000_000,invite_expires_at:1_300_000},
+          {label:"Two hours",created_at:1_000_000,invite_expires_at:8_200_000},
+        ]);
+      const saved = f.db.prepare("SELECT * FROM support_sessions ORDER BY id").all();
+
+      now = 1_059_999;
+      const preview = await f.app.inject({url:`/api/support/invite/${short.invite}`});
+      expect(preview.statusCode).toBe(200);
+      expect(preview.json().inviteExpiresAt).toBe(1_060_000);
+      for (const suffix of ["","/windows.cmd?downloadSource=npmmirror"]) {
+        expect((await f.app.inject({url:`/support/invite/${short.invite}${suffix}`})).statusCode).toBe(200);
+      }
+      expect(f.db.prepare("SELECT * FROM support_sessions ORDER BY id").all()).toEqual(saved);
+      expect(f.devices.listOwnedDevices("owner")).toEqual([]);
+      const closed = f;
+      f = undefined;
+      await closed.dispose();
+      expect(closed.db.open).toBe(false);
+      expect(existsSync(databasePath)).toBe(true);
+
+      now = 1_360_000;
+      f = timedSupportFixture(()=>now,databasePath);
+      expect(f.db).not.toBe(closed.db);
+      expect(f.db.prepare("SELECT * FROM support_sessions ORDER BY id").all()).toEqual(saved);
+      for (const invite of [short.invite,legacy.invite]) {
+        const expired = await f.app.inject({method:"POST",url:"/api/support/join",
+          payload:{invite,deviceName:"Expired customer",platform:"win32"}});
+        expect(expired.statusCode).toBe(410);
+        expect(expired.json()).toEqual({error:"INVITE_EXPIRED"});
+      }
+      expect(f.devices.listOwnedDevices("owner")).toEqual([]);
+      expect(f.db.prepare("SELECT COUNT(*) AS count FROM device_credentials").get()).toEqual({count:0});
+      const remaining = await f.app.inject({url:`/api/support/invite/${long.invite}`});
+      expect(remaining.statusCode).toBe(200);
+      expect(remaining.json().inviteExpiresAt).toBe(8_200_000);
+      expect(f.db.prepare("SELECT * FROM support_sessions ORDER BY id").all()).toEqual(saved);
+      const joined = await f.app.inject({method:"POST",url:"/api/support/join",
+        payload:{invite:long.invite,deviceName:"Customer after restart",platform:"win32"}});
+      expect(joined.statusCode).toBe(201);
+      expect(joined.json().sessionId).toBe(long.session.id);
+      expect(f.devices.findById(joined.json().deviceId)).toMatchObject({ownerId:"owner"});
+      expect(f.db.prepare("SELECT created_at, invite_expires_at, joined_at, device_id FROM support_sessions WHERE id=?")
+        .get(long.session.id)).toEqual({created_at:1_000_000,invite_expires_at:8_200_000,
+          joined_at:1_360_000,device_id:joined.json().deviceId});
+    } finally {
+      try {await f?.dispose();}
+      finally {rmSync(directory,{recursive:true,force:true});}
+    }
+    expect(existsSync(directory)).toBe(false);
   });
 
   it("validates direct service durations before writing an invitation", () => {
