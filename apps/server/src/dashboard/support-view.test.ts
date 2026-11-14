@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SupportSession } from "../support/support-service.js";
-import { renderSupportDashboard, renderCustomerSupport, type CustomerSupportOptions } from "./views/support.js";
+import { renderSupportDashboard, renderSupportCreated, renderCustomerSupport, type CustomerSupportOptions } from "./views/support.js";
 import type { ShellContext } from "./ui/components.js";
 
 const ctx: ShellContext = {
@@ -94,15 +94,101 @@ describe("support invitation duration", () => {
 
   it("shows the saved expiry belonging to each invitation in history", () => {
     const page = renderSupportDashboard(ctx, [
-      {...base, label: "First customer", inviteExpiresAt: new Date(2026, 0, 2, 12, 30).getTime()},
-      {...base, id: "second", label: "Second customer", inviteExpiresAt: new Date(2026, 0, 3, 14, 0).getTime()},
+      {...base, label: "First customer", inviteExpiresAt: Date.UTC(2026, 0, 2, 12, 30, 5)},
+      {...base, id: "second", label: "Second customer", inviteExpiresAt: Date.UTC(2026, 0, 3, 14, 0, 25)},
     ], new Map(), true);
     const cards = page.match(/<article\b[^>]*>[\s\S]*?<\/article>/g);
     expect(cards).toHaveLength(2);
     expect(cards?.[0]).toContain("First customer");
-    expect(cards?.[0]).toContain("Invitation expires: Jan 2, 2026, 12:30 PM");
+    expect(cards?.[0]).toContain("Jan 2, 2026, 12:30:05 UTC");
+    expect(cards?.[0]).toContain('datetime="2026-01-02T12:30:05.000Z"');
     expect(cards?.[1]).toContain("Second customer");
-    expect(cards?.[1]).toContain("Invitation expires: Jan 3, 2026, 02:00 PM");
+    expect(cards?.[1]).toContain("Jan 3, 2026, 14:00:25 UTC");
+    expect(cards?.[1]).toContain('datetime="2026-01-03T14:00:25.000Z"');
+  });
+});
+
+describe("support invitation summary", () => {
+  const createdAt = Date.UTC(2026, 0, 2, 23, 59, 35);
+  const downloads = {
+    win: "https://remote.example.com/support/invite/test/OpenRemote-Support.cmd",
+    mac: "https://remote.example.com/support/invite/test/OpenRemote-Support.command",
+    linux: "https://remote.example.com/support/invite/test/OpenRemote-Support.sh",
+  };
+
+  it.each([
+    [1, "1 minute", "1分钟"], [5, "5 minutes", "5分钟"],
+    [120, "2 hours", "2小时"], [10080, "7 days", "7天"],
+  ] as const)("shows the original %s minute validity even when rendered after creation", (minutes, english, chinese) => {
+    const session = {...base, createdAt, inviteExpiresAt: createdAt + minutes * 60_000};
+    expect(renderSupportCreated(ctx, customer.invite, session)).toContain(english);
+    expect(renderSupportCreated({...ctx, locale:"zh-CN"}, customer.invite, session)).toContain(chinese);
+  });
+
+  it.each([false, true])("keeps validity, exact deadline and manual-end explanation ahead of downloads (enabled=%s)", (enabled) => {
+    const session = {...base, createdAt, inviteExpiresAt: Date.UTC(2026, 0, 3, 0, 4, 35)};
+    const page = renderSupportCreated(ctx, customer.invite, session, enabled ? downloads : undefined);
+    const copy = page.indexOf("Copy invite link");
+    for (const text of ["Invitation valid for", "5 minutes", "Jan 3, 2026, 00:04:35 UTC"]) {
+      expect(page.indexOf(text)).toBeGreaterThan(-1);
+      expect(page.indexOf(text)).toBeLessThan(copy);
+    }
+    expect(page).toContain('datetime="2026-01-03T00:04:35.000Z"');
+    const manualEnd = page.indexOf("After the customer connects, only you or the customer can end the session.");
+    expect(manualEnd).toBeGreaterThan(copy);
+    if (enabled) {
+      const detailsStart = page.indexOf("<details");
+      expect(detailsStart).toBeGreaterThan(manualEnd);
+      const details = page.match(/<details\b[^>]*>[\s\S]*?<\/details>/)?.[0];
+      expect(details).toBeDefined();
+      expect(details).toContain("<summary>");
+      expect(details?.match(/<a\b[^>]*class="btn /g)).toHaveLength(3);
+      expect(details?.match(/<button\b[^>]*data-copy=/g)).toHaveLength(6);
+      for (const url of Object.values(downloads)) {
+        expect(details).toContain(`href="${url}"`);
+        expect(details).toContain(`data-copy="${url}"`);
+        expect(details).toContain(`data-copy="${url}?downloadSource=npmmirror"`);
+      }
+      expect(details).not.toContain("Invitation expires");
+      expect(details).not.toContain("After the customer connects");
+    } else {
+      expect(page).not.toContain("<details");
+      expect(page).not.toContain("OpenRemote-Support.cmd");
+    }
+  });
+
+  it("renders the same exact UTC deadline on success, history and customer pages", () => {
+    const expiresAt = Date.UTC(2026, 0, 3, 0, 4, 35);
+    const session = {...base, createdAt, inviteExpiresAt:expiresAt};
+    for (const page of [
+      renderSupportCreated(ctx, customer.invite, session),
+      renderSupportDashboard(ctx, [session], new Map(), true),
+      renderCustomerSupport({...customer, expiresAt}),
+    ]) {
+      expect(page).toContain("Jan 3, 2026, 00:04:35 UTC");
+      expect(page).toContain('datetime="2026-01-03T00:04:35.000Z"');
+    }
+  });
+
+  it.each(["en", "zh-CN"] as const)("gives the recipient direct platform instructions while preserving manual consent in %s", (locale) => {
+    for (const os of ["win", "mac", "linux"] as const) {
+      const page = renderCustomerSupport({...customer, locale, os, installCommand:"verified-command", downloadUrl:downloads[os]});
+      const downloadSection = page.slice(page.indexOf("</h1>"), page.indexOf("<details"));
+      expect(downloadSection).not.toContain(locale === "en" ? "Send this download link to the customer" : "将下载链接发给客户");
+      expect(downloadSection).toContain(locale === "en" ? "Choose this computer's operating system".replace("'", "&#39;") : "选择这台电脑的操作系统");
+      expect(downloadSection).toContain(locale === "en" ? "Only run it if you trust the requester" : "仅在信任协助方时运行");
+      expect(downloadSection).toContain(locale === "en" ? "without a confirmation prompt" : "不再弹出输入确认");
+      expect(downloadSection).toContain("Ctrl+C");
+      expect(downloadSection).toContain(locale === "en" ? "wait for revocation to finish" : "等待撤销完成");
+      expect(downloadSection).not.toContain("YES");
+      const manual = page.match(/<details\b[^>]*>[\s\S]*?<\/details>/)?.[0];
+      expect(manual).toContain("YES");
+      if (os === "win") expect(downloadSection).toContain(locale === "en" ? "double-click" : "双击");
+      else {
+        expect(downloadSection).toContain("Bash");
+        expect(downloadSection).toContain("bash ~/Downloads/");
+      }
+    }
   });
 });
 

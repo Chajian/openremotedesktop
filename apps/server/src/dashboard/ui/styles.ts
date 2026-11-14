@@ -538,4 +538,20 @@ details.owner .inner { padding: 0 16px 16px; display: flex; flex-direction: colu
 .dcard-menu-pop a:hover, .dcard-menu-pop a:focus-visible { background: var(--sunken); color: var(--text); }
 .dcard-menu-pop a.danger { color: var(--err); }
 .mtab.has-support { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+/* Support invitation content keeps full labels and actions readable on narrow screens. */
+.support-page, .support-customer, .support-page .page-head > div { min-width: 0; max-width: 100%; }
+.support-page .lead, .support-session-title, .support-customer .lead { overflow-wrap: anywhere; min-width: 0; max-width: 100%; }
+.support-session-title { flex: 1 1 220px; }
+.support-page .btn, .support-customer .btn { max-width: 100%; height: auto; min-height: 40px; padding-top: 8px; padding-bottom: 8px; white-space: normal; text-align: center; }
+.support-page .code-body, .support-customer .code-body { overflow-wrap: anywhere; }
+.support-created { max-width: 760px; }
+.support-validity { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 0 0 20px; padding: 16px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel-2); }
+.support-validity > div { flex: 1 1 220px; min-width: 0; }
+.support-validity dt { color: var(--text-2); font-size: 14px; }
+.support-validity dd { margin: 4px 0 0; font-weight: 600; overflow-wrap: anywhere; }
+.support-session-note { margin: 16px 0 20px; }
+.support-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.support-downloads { margin: 20px 0; padding-top: 12px; border-top: 1px solid var(--line); }
+.support-downloads > summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
+.support-help { font-size: 14px; color: var(--text-2); line-height: 1.65; }
 `;

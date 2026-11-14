@@ -139,6 +139,14 @@ and pass `--accept-support`: running the file is the explicit consent action,
 explained on the page and in the terminal. Merely viewing or downloading an
 invitation never redeems it. All three platforms offer official or npmmirror
 downloads with the same installer and package verification rules.
+
+The public invitation page returns localized HTML for unavailable links: 404
+for invalid, missing or ended invitations, 409 for invitations already used,
+and 410 for unused invitations past their deadline. An already-used invitation
+keeps the 409 result after its deadline. API and script-download routes retain
+their JSON errors and status codes; security headers apply to all these
+responses. Support pages display the saved deadline to the second in UTC.
+
 Once joined, the temporary device inherits the creator account's authorized
 MCP clients, including multiple AI clients; it does not bypass the platform's
 own consent prompts.
