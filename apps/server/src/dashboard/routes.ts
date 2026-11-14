@@ -6,7 +6,8 @@ import { renderMcp, displayClient } from "./views/mcp.js";
 import { renderSettings, type PasswordError } from "./views/settings.js";
 import { renderConfirm } from "./views/confirm.js";
 import { renderSupportDashboard, renderSupportCreated } from "./views/support.js";
-import { SupportNotFoundError, type SupportService } from "../support/support-service.js";
+import { DEFAULT_SUPPORT_INVITE_MINUTES, MAX_SUPPORT_INVITE_MINUTES,
+  SupportNotFoundError, type SupportService } from "../support/support-service.js";
 import type { NavKey, ShellContext } from "./ui/components.js";
 import { renderLogin } from "./views/login.js";
 import { renderErrorPage } from "./views/error.js";
@@ -76,6 +77,20 @@ function bodyRecord(request: FastifyRequest): Record<string, unknown> {
     : {};
 }
 
+function supportInviteMinutes(body: Record<string, unknown>): number | null {
+  const { inviteDuration, inviteDurationUnit } = body;
+  // Existing clients that omit both new fields retain the previous default.
+  if (inviteDuration === undefined && inviteDurationUnit === undefined) return DEFAULT_SUPPORT_INVITE_MINUTES;
+  if (typeof inviteDuration !== "string" && typeof inviteDuration !== "number") return null;
+  if (typeof inviteDuration === "string" && !/^\d+$/.test(inviteDuration.trim())) return null;
+  const duration = Number(inviteDuration);
+  const multiplier = inviteDurationUnit === "minutes" ? 1
+    : inviteDurationUnit === "hours" ? 60 : inviteDurationUnit === "days" ? 1440 : null;
+  if (!Number.isSafeInteger(duration) || duration < 1 || multiplier === null) return null;
+  const minutes = duration * multiplier;
+  return Number.isSafeInteger(minutes) && minutes <= MAX_SUPPORT_INVITE_MINUTES ? minutes : null;
+}
+
 function requireCsrf(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -131,6 +146,7 @@ export function registerDashboardRoutes(
   app.get("/dashboard/support", async (request, reply) => {
     const auth = requireDashboardAuth(request, reply, deps.sessions);
     if (!auth) return;
+    interactivePage(reply);
     const sessions = deps.support.listOwned(auth.principal.ownerId);
     const statuses = new Map(deps.registry.snapshot().map(s => [s.deviceId, s.state]));
     return reply.type("text/html; charset=utf-8").send(
@@ -141,10 +157,25 @@ export function registerDashboardRoutes(
     if (!deps.config.supportEnabled) return reply.code(404).send();
     const auth = requireDashboardAuth(request, reply, deps.sessions);
     if (!auth || !requireCsrf(request, reply, auth, csrf, shell(request, auth, "support"), "/dashboard/support")) return;
-    const label = bodyRecord(request).label;
-    if (typeof label !== "string" || !label.trim() || label.length > 80)
-      return dashboardError(request, reply, auth, 400, "invalid", "/dashboard/support");
-    const { session, invite } = deps.support.create(auth.principal.ownerId, label);
+    const body = bodyRecord(request);
+    const label = body.label;
+    const labelError = typeof label !== "string" || !label.trim() || label.length > 80;
+    const expiresInMinutes = supportInviteMinutes(body);
+    if (labelError || expiresInMinutes === null) {
+      const statuses = new Map(deps.registry.snapshot().map(s => [s.deviceId, s.state]));
+      interactivePage(reply);
+      return reply.code(400).type("text/html; charset=utf-8").send(renderSupportDashboard(
+        shell(request, auth, "support"), deps.support.listOwned(auth.principal.ownerId), statuses, true,
+        {label:typeof label === "string" ? label : "", labelError, expiryError:expiresInMinutes === null,
+          // An old form that omits both duration fields still has a valid five-minute default.
+          ...(body.inviteDuration === undefined && body.inviteDurationUnit === undefined ? {} : {
+            inviteDuration:typeof body.inviteDuration === "string" || typeof body.inviteDuration === "number"
+              ? String(body.inviteDuration) : "",
+            inviteDurationUnit:typeof body.inviteDurationUnit === "string" ? body.inviteDurationUnit : "",
+          })},
+      ));
+    }
+    const { session, invite } = deps.support.create(auth.principal.ownerId, label, expiresInMinutes);
     interactivePage(reply);
     return reply.type("text/html; charset=utf-8").send(
       renderSupportCreated(shell(request, auth, "support"), invite, session,

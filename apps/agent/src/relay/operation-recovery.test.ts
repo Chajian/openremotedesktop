@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { createServer } from "node:http";
+import type { Socket as NetSocket } from "node:net";
 import { describe, expect, it, vi } from "vitest";
 import { OPERATION_RECOVERY_CAPABILITY, OPERATION_RECOVERY_NOTICE, type OperationCallMessage } from "@open-desktop-remote/protocol";
 import { ExecutorManager } from "../executor/executor-manager.js";
@@ -313,19 +314,25 @@ it.each([new ServerRequestError(408, null), new ServerRequestError(429, null), n
 it("keeps a malformed 101 handshake from the actual WebSocket factory terminal", async () => {
   const h = await harness(); let attempts = 0;
   const server = createServer();
+  const sockets = new Set<NetSocket>();
+  server.on("connection", socket => {
+    sockets.add(socket);
+    socket.on("error", () => undefined);
+    socket.once("close", () => sockets.delete(socket));
+  });
   server.on("upgrade", (_request, socket) => {
     attempts++;
     socket.end("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: invalid\r\n\r\n");
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "localhost", resolve);
+    server.listen(0, "127.0.0.1", resolve);
   });
   try {
     const address = server.address();
     if (address === null || typeof address === "string") throw new Error("Expected a TCP fixture");
     const relay = new RelayClient({ identity,
-      credential: { ...credential, serverUrl: `http://localhost:${address.port}` },
+      credential: { ...credential, serverUrl: `http://127.0.0.1:${address.port}` },
       executor: h.executor, heartbeatIntervalMs: 0,
       refreshToken: async () => ({ accessToken: "test", expiresAt: 99_000, deviceId }),
       sleep: async () => { throw new Error("unexpected retry"); },
@@ -333,6 +340,7 @@ it("keeps a malformed 101 handshake from the actual WebSocket factory terminal",
     await expect(relay.run(new AbortController().signal)).rejects.toThrow("Invalid Sec-WebSocket-Accept header");
     expect(attempts).toBe(1);
   } finally {
+    for (const socket of sockets) socket.destroy();
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });
@@ -340,16 +348,22 @@ it("keeps a malformed 101 handshake from the actual WebSocket factory terminal",
 it("retries a network close during the actual WebSocket handshake", async () => {
   const h = await harness(); const stop = new AbortController(); let attempts = 0; let retries = 0;
   const server = createServer();
+  const sockets = new Set<NetSocket>();
+  server.on("connection", socket => {
+    sockets.add(socket);
+    socket.on("error", () => undefined);
+    socket.once("close", () => sockets.delete(socket));
+  });
   server.on("upgrade", (_request, socket) => { attempts++; socket.destroy(); });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "localhost", resolve);
+    server.listen(0, "127.0.0.1", resolve);
   });
   try {
     const address = server.address();
     if (address === null || typeof address === "string") throw new Error("Expected a TCP fixture");
     const relay = new RelayClient({ identity,
-      credential: { ...credential, serverUrl: `http://localhost:${address.port}` },
+      credential: { ...credential, serverUrl: `http://127.0.0.1:${address.port}` },
       executor: h.executor, heartbeatIntervalMs: 0,
       refreshToken: async () => ({ accessToken: "test", expiresAt: 99_000, deviceId }),
       sleep: async () => { retries++; stop.abort(); },
@@ -357,6 +371,7 @@ it("retries a network close during the actual WebSocket handshake", async () => 
     await relay.run(stop.signal);
     expect(attempts).toBe(1); expect(retries).toBe(1); expect(h.executor.state()).toBe("READY");
   } finally {
+    for (const socket of sockets) socket.destroy();
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });

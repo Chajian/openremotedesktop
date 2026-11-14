@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { catalogKeys, formatRelative, resolveLocale, safeLangReturnTo, t } from "./i18n.js";
+import { catalogKeys, formatRelative, formatSupportDateTime, resolveLocale, safeLangReturnTo, t } from "./i18n.js";
 
 describe("locale resolution", () => {
   it("prefers the cookie, then Accept-Language, then English", () => {
@@ -38,6 +38,14 @@ describe("formatRelative", () => {
     expect(formatRelative("en", now - 5 * 60_000, now)).toContain("5");
     expect(formatRelative("zh-CN", now - 2 * 86_400_000, now)).toContain("2");
     expect(formatRelative("en", null, now)).toBe(t("en", "time.never"));
+  });
+});
+
+describe("Support deadline formatting", () => {
+  it("names UTC and retains seconds independently of the host's time zone", () => {
+    const ts = Date.UTC(2026, 0, 3, 0, 4, 35);
+    expect(formatSupportDateTime("en", ts)).toBe("Jan 3, 2026, 00:04:35 UTC");
+    expect(formatSupportDateTime("zh-CN", ts)).toBe("2026年1月3日 UTC 00:04:35");
   });
 });
 

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { renderCustomerSupport } from "../dashboard/views/support.js";
+import { renderSupportUnavailable } from "../dashboard/views/support-unavailable.js";
 import { installerInstructions, downloadSourceFromQuery, installerOsFromQuery, supportsAgentSupport } from "../dashboard/installer.js";
 import { installerOperatingSystems, installerPlatforms } from "../dashboard/platforms.js";
 import { localeFromRequest } from "../dashboard/ui/i18n.js";
@@ -57,7 +58,16 @@ export function registerSupportRoutes(app: FastifyInstance, support: SupportServ
         downloadUrl: install && supportsDownloadedLauncher(config.supportAgentVersion)
           ? supportDownloadUrl(baseUrl, invite, downloadSource, os) : undefined,
       }));
-    } catch (error) { return errorReply(reply, error); }
+    } catch (error) {
+      const reason = error instanceof SupportNotFoundError ? "invalid"
+        : error instanceof SupportAlreadyJoinedError ? "used"
+        : error instanceof SupportInviteExpiredError ? "expired" : null;
+      if (reason === null) throw error;
+      const status = {invalid:404, used:409, expired:410}[reason];
+      return reply.code(status).type("text/html; charset=utf-8").send(renderSupportUnavailable({
+        locale: localeFromRequest(request), reason,
+      }));
+    }
   });
 
   app.get("/api/support/invite/:invite", async (request, reply) => {

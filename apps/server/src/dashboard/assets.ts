@@ -1,6 +1,13 @@
 import type { FastifyInstance } from "fastify";
 
-/** Progressive enhancement only: the native forms remain usable without JavaScript. */
+/**
+ * Progressive enhancement only: the native forms remain usable without JavaScript.
+ * Polling refreshes status and recovery controls together without interrupting edits;
+ * network interruptions leave the page usable. Only indentation is stripped when served.
+ * Initial unit synchronization preserves server validation feedback.
+ * Invite forms enable native validation once their unit-dependent maximum can update;
+ * without this enhancement, the server validates submissions so unit changes stay usable.
+ */
 export const UI_SCRIPT = String.raw`(() => {
   const all = (selector) => Array.from(document.querySelectorAll(selector));
   all('[data-live-status]').forEach((card) => {
@@ -9,10 +16,9 @@ export const UI_SCRIPT = String.raw`(() => {
         const response = await fetch('/dashboard/devices/' + encodeURIComponent(card.dataset.deviceId) + '/status', { credentials: 'same-origin', cache: 'no-store' });
         if (!response.ok) return;
         const data = await response.json();
-        // Refresh status and recovery controls together, without interrupting edits.
         const editingName = all('input[name="name"]').some(input => input.value !== input.defaultValue);
         if (data.state !== card.dataset.state && !editingName && !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) location.reload();
-      } catch { /* Keep the page usable during network interruptions. */ }
+      } catch {}
     }
     void poll();
     setInterval(poll, 2500);
@@ -45,6 +51,25 @@ export const UI_SCRIPT = String.raw`(() => {
         area.addEventListener('blur', () => area.remove());
       }
     });
+  });
+  all('select[data-duration-input]').forEach(unit=> {
+    const input=document.getElementById(unit.dataset.durationInput);
+    if(!input)return;
+    const hint=input.getAttribute('aria-describedby')||'';
+    const syncMax=()=>input.max=unit.selectedOptions[0]?.dataset.max||input.max;
+    const update=e=> {
+      syncMax();
+      const invalid=!input.validity.valid||!unit.validity.valid;
+      [input,unit].forEach(field=> {
+        field.setAttribute('aria-invalid',invalid);
+        field.setAttribute('aria-describedby',invalid?hint:hint.replace(' '+input.id+'-error', ''));
+      });
+      if(e.type==='change'&&input.validity.rangeOverflow)input.reportValidity();
+    };
+    unit.addEventListener('change',update);
+    input.addEventListener('input',update);
+    syncMax();
+    input.form?.removeAttribute('novalidate');
   });
   const clean = (text) => String(text).toUpperCase().replace(/[^ABCDEFGHJKLMNPQRSTUVWXYZ23456789]/g, '');
   all('input[data-code-input]').forEach((input) => {
@@ -103,7 +128,7 @@ export const UI_SCRIPT = String.raw`(() => {
     form.addEventListener('submit', (event) => { if (input.value !== input.dataset.confirmMatch) { event.preventDefault(); input.focus(); } });
     update();
   });
-})();`;
+})();`.replace(/^[ \t]+/gm, "");
 
 export function registerDashboardAssets(app: FastifyInstance): void {
   app.get("/dashboard/assets/ui.js", async (_request, reply) => reply.type("text/javascript; charset=utf-8").header("Cache-Control", "no-cache").header("X-Content-Type-Options", "nosniff").send(UI_SCRIPT));

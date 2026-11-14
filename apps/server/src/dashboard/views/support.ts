@@ -1,33 +1,78 @@
-import type { SupportSession } from "../../support/support-service.js";
+import { DEFAULT_SUPPORT_INVITE_MINUTES, MAX_SUPPORT_INVITE_MINUTES, type SupportSession } from "../../support/support-service.js";
 import { html, type SafeHtml } from "../ui/html.js";
-import { appDocument, pageHead, hiddenInput, soloDocument, type ShellContext } from "../ui/components.js";
+import { appDocument, pageHead, hiddenInput, soloDocument, callout, type ShellContext } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
-import { t, type Locale, formatDateTime } from "../ui/i18n.js";
+import { t, type Locale, formatSupportDateTime } from "../ui/i18n.js";
 import type { DownloadSource } from "../installer.js";
 import { installerOperatingSystems, installerPlatforms, type InstallerOS } from "../platforms.js";
 
 const systems = installerOperatingSystems.map(os => ({os, ...installerPlatforms[os]}));
+const durationUnits = [
+  { value: "minutes", max: MAX_SUPPORT_INVITE_MINUTES },
+  { value: "hours", max: MAX_SUPPORT_INVITE_MINUTES / 60 },
+  { value: "days", max: MAX_SUPPORT_INVITE_MINUTES / (24 * 60) },
+] as const;
+
+function supportTime(locale: Locale, timestamp: number): SafeHtml {
+  return html`<time datetime="${new Date(timestamp).toISOString()}">${formatSupportDateTime(locale, timestamp)}</time>`;
+}
+
+function inviteDuration(locale: Locale, session: SupportSession): string {
+  const minutes = (session.inviteExpiresAt - session.createdAt) / 60_000;
+  const [value, unit] = minutes % 1440 === 0 ? [minutes / 1440, "day"] as const
+    : minutes % 60 === 0 ? [minutes / 60, "hour"] as const : [minutes, "minute"] as const;
+  return new Intl.NumberFormat(locale, {style:"unit", unit, unitDisplay:"long"}).format(value);
+}
+
+export interface SupportFormState {
+  label?: string;
+  labelError?: boolean;
+  inviteDuration?: string;
+  inviteDurationUnit?: string;
+  expiryError?: boolean;
+}
 
 export function renderSupportDashboard(
   ctx: ShellContext, sessions: SupportSession[],
   devices: ReadonlyMap<string, string>, enabled: boolean,
+  formState: SupportFormState = {},
 ): string {
+  const selectedUnit = durationUnits.find(unit => unit.value === (formState.inviteDurationUnit ?? "minutes"));
+  const durationDescription = formState.expiryError
+    ? "support-invite-duration-hint support-invite-duration-error" : "support-invite-duration-hint";
+  const maxDays = MAX_SUPPORT_INVITE_MINUTES / (24 * 60);
   const form = html`<section class="card card-pad" style="margin-bottom:24px">
     <h2>${t(ctx.locale, "support.createTitle")}</h2>
     <p class="muted">${t(ctx.locale, "support.createLead")}</p>
-    <form method="post" action="/dashboard/support/create" style="margin-top:16px">
+    <form method="post" action="/dashboard/support/create" novalidate style="margin-top:16px">
       ${hiddenInput("csrf", ctx.csrf)}
       <div class="field"><label for="support-label">${t(ctx.locale, "support.name")}</label>
-        <input class="input" name="label" id="support-label" maxlength="80"
-         placeholder="${t(ctx.locale, "support.namePlaceholder")}" required></div>
+        <input class="input" name="label" id="support-label" maxlength="80" value="${formState.label ?? ""}"
+         placeholder="${t(ctx.locale, "support.namePlaceholder")}" required aria-invalid="${formState.labelError ? "true" : "false"}"${formState.labelError ? html` aria-describedby="support-label-error"` : null}>
+        ${formState.labelError ? callout("err", null, html`<p id="support-label-error">${t(ctx.locale, "support.nameError")}</p>`) : null}</div>
+      <div class="row" style="align-items:flex-end;flex-wrap:wrap;margin-top:16px;max-width:440px">
+        <div class="field" style="flex:1;min-width:140px"><label for="support-invite-duration">${t(ctx.locale, "support.inviteDuration")}</label>
+          <input class="input" name="inviteDuration" id="support-invite-duration" type="number" min="1" max="${selectedUnit?.max ?? MAX_SUPPORT_INVITE_MINUTES}" step="1"
+            value="${formState.inviteDuration ?? DEFAULT_SUPPORT_INVITE_MINUTES}" required
+            aria-describedby="${durationDescription}" aria-invalid="${formState.expiryError ? "true" : "false"}"></div>
+        <div class="field" style="flex:1;min-width:140px"><label for="support-invite-duration-unit">${t(ctx.locale, "support.inviteDurationUnit")}</label>
+          <select class="input" name="inviteDurationUnit" id="support-invite-duration-unit" data-duration-input="support-invite-duration" required
+            aria-describedby="${durationDescription}" aria-invalid="${formState.expiryError ? "true" : "false"}">
+            <option value="" disabled${selectedUnit ? null : html` selected`}>${t(ctx.locale, "support.chooseDurationUnit")}</option>
+            ${durationUnits.map(unit => html`<option value="${unit.value}" data-max="${unit.max}"${selectedUnit === unit ? html` selected` : null}>${t(ctx.locale, `support.inviteDurationUnit.${unit.value}`)}</option>`)}
+          </select></div>
+      </div>
+      <p class="support-help" id="support-invite-duration-hint" style="margin:8px 0 12px">${t(ctx.locale, "support.inviteDurationHint", {days: maxDays})}</p>
+      ${formState.expiryError ? callout("err", null, html`<p id="support-invite-duration-error">${t(ctx.locale, "support.inviteDurationError", {days: maxDays})}</p>`) : null}
       <button class="btn btn-primary" type="submit" style="margin-top:12px">${t(ctx.locale, "support.create")}</button>
     </form>
   </section>`;
-  const cards = sessions.map(s => html`<article class="card card-pad" style="margin:12px 0">
+  const cards = sessions.map(s => html`<article class="card card-pad support-session" style="margin:12px 0">
       <div class="row" style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap">
-        <h3>${s.label}</h3><span class="chip">${t(ctx.locale, `support.state.${s.state}`)}</span>
+        <h3 class="support-session-title">${s.label}</h3><span class="chip">${t(ctx.locale, `support.state.${s.state}`)}</span>
       </div>
-      <p class="muted">${t(ctx.locale, "support.createdAt")}: ${formatDateTime(ctx.locale,s.createdAt)}</p>
+      <p class="muted">${t(ctx.locale, "support.createdAt")}: ${supportTime(ctx.locale,s.createdAt)}</p>
+      <p class="muted">${t(ctx.locale, "support.inviteExpiry")}: ${supportTime(ctx.locale,s.inviteExpiresAt)}</p>
       ${s.deviceId ? (s.state === "active" && s.deviceAccessible
         ? html`<a href="/dashboard/devices/${encodeURIComponent(s.deviceId)}">${t(ctx.locale,"support.device")}: ${s.deviceId.slice(0,8)} (${devices.get(s.deviceId) ?? "OFFLINE"})</a>`
         : html`<span class="muted">${t(ctx.locale,"support.device")}: ${s.deviceId.slice(0,8)} (${t(ctx.locale,"support.deviceRemoved")})</span>`)
@@ -35,32 +80,36 @@ export function renderSupportDashboard(
       ${s.state !== "ended" ? html`<a class="btn btn-danger btn-sm" style="margin-top:14px"
         href="/dashboard/support/${encodeURIComponent(s.id)}/end">${t(ctx.locale,"support.end")}</a>` : null}
     </article>`);
-  const body = html`${pageHead({title:t(ctx.locale,"support.title"),lead:t(ctx.locale,"support.lead")})}
+  const body = html`<div class="support-page">${pageHead({title:t(ctx.locale,"support.title"),lead:t(ctx.locale,"support.lead")})}
     ${enabled ? form : null}<h2>${t(ctx.locale,"support.history")}</h2>
-    ${cards.length ? cards : html`<p class="muted">${t(ctx.locale,"support.empty")}</p>`}`;
+    ${cards.length ? cards : html`<p class="muted">${t(ctx.locale,"support.empty")}</p>`}</div>`;
   return appDocument({ctx,title:t(ctx.locale,"support.title"),body});
 }
 
 export function renderSupportCreated(ctx: ShellContext, invite: string, session: SupportSession, downloads?: Record<InstallerOS, string>): string {
   const url = new URL("/support/invite/" + invite, ctx.publicBaseUrl).toString();
-  const body = html`${pageHead({title:t(ctx.locale,"support.created"),lead:session.label})}
-    <section class="card card-pad" style="max-width:760px">
+  const body = html`<div class="support-page">${pageHead({title:t(ctx.locale,"support.created"),lead:session.label})}
+    <section class="card card-pad support-created">
+      <dl class="support-validity">
+        <div><dt>${t(ctx.locale,"support.inviteDuration")}</dt><dd>${inviteDuration(ctx.locale,session)}</dd></div>
+        <div><dt>${t(ctx.locale,"support.inviteExpiry")}</dt><dd>${supportTime(ctx.locale,session.inviteExpiresAt)}</dd></div>
+      </dl>
       <p>${t(ctx.locale,"support.inviteHint")}</p>
       <div class="code"><div class="code-body" style="overflow-wrap:anywhere">${url}</div></div>
       <button class="btn btn-primary" data-copy="${url}" data-copied-label="${t(ctx.locale,"common.copied")}" type="button">
         ${icon("copy",15)}<span data-copy-label>${t(ctx.locale,"support.copyLink")}</span>
       </button>
-      ${downloads ? html`${systems.map(({os,label,support}) => html`<section style="margin-top:20px"><h3>${label}</h3>
-        <a class="btn btn-secondary" href="${downloads[os]}">${t(ctx.locale,"support.download",{os:label})}</a>
+      <p class="muted support-session-note">${t(ctx.locale,"support.noTimeout")}</p>
+      ${downloads ? html`<details class="support-downloads"><summary>${t(ctx.locale,"support.downloadInstructions")}</summary>
+        ${systems.map(({os,label,support}) => html`<section style="margin-top:20px"><h3>${label}</h3>
+        <div class="support-actions"><a class="btn btn-secondary" href="${downloads[os]}">${t(ctx.locale,"support.download",{os:label})}</a>
         <button class="btn btn-secondary" type="button" data-copy="${downloads[os]}" data-copied-label="${t(ctx.locale,"common.copied")}"><span data-copy-label>${t(ctx.locale,"support.copyDownload")}</span></button>
-        <button class="btn btn-secondary" type="button" data-copy="${downloads[os]}?downloadSource=npmmirror" data-copied-label="${t(ctx.locale,"common.copied")}"><span data-copy-label>${t(ctx.locale,"support.copyMirrorDownload")}</span></button>
+        <button class="btn btn-secondary" type="button" data-copy="${downloads[os]}?downloadSource=npmmirror" data-copied-label="${t(ctx.locale,"common.copied")}"><span data-copy-label>${t(ctx.locale,"support.copyMirrorDownload")}</span></button></div>
         <p class="muted">${t(ctx.locale,os === "win" ? "support.downloadHint" : "support.posixDownloadHint",{filename:support.filename})}</p>
       </section>`)}
-        <p><a href="${url}">${t(ctx.locale,"support.viewInstructions")}</a></p>` : null}
-      <p class="muted" style="margin-top:16px">${t(ctx.locale,"support.inviteExpiry")}: ${formatDateTime(ctx.locale,session.inviteExpiresAt)}</p>
-      <p class="muted">${t(ctx.locale,"support.noTimeout")}</p>
+        <p><a class="link" href="${url}">${t(ctx.locale,"support.viewInstructions")}</a></p></details>` : null}
       <a class="btn btn-secondary" href="/dashboard/support">${t(ctx.locale,"support.back")}</a>
-    </section>`;
+    </section></div>`;
   return appDocument({ctx,title:t(ctx.locale,"support.created"),body});
 }
 
@@ -85,11 +134,12 @@ export function renderCustomerSupport({
   const filename = system.support.filename;
   const command = installCommand ??
     `pnpm --filter @open-desktop-remote/agent start -- agent support --server ${baseUrl.origin} --invite ${invite}`;
-  const body: SafeHtml = html`<section class="solo-card card">
+  const body: SafeHtml = html`<section class="solo-card card support-customer">
     <h1 class="h1">${t(locale,"support.customerTitle")}</h1>
     <p class="lead">${t(locale,"support.customerLead", {label})}</p>
     <p>${t(locale,"support.customerFullAccess")}</p>
-    <p class="muted">${t(locale,"support.inviteExpiry")}: ${formatDateTime(locale,expiresAt)}</p>
+    <p class="muted">${t(locale,"support.inviteExpiry")}: ${supportTime(locale,expiresAt)}</p>
+    <p class="muted">${t(locale,"support.customerNoTimeout")}</p>
     <div class="field"><p>${t(locale,"support.chooseSystem")}</p>${systems.map(s => html`<a
       class="btn ${s.os === os ? "btn-primary" : "btn-secondary"}"
       href="?os=${s.os}&amp;downloadSource=${downloadSource}" aria-current="${s.os === os ? "page" : "false"}">${s.label}</a>`)}</div>
@@ -99,7 +149,7 @@ export function renderCustomerSupport({
       <a class="btn ${downloadSource === "official" ? "btn-primary" : "btn-secondary"}" href="?os=${os}&amp;downloadSource=official">${t(locale,"installer.official")}</a>
       <a class="btn ${downloadSource === "npmmirror" ? "btn-primary" : "btn-secondary"}" href="?os=${os}&amp;downloadSource=npmmirror">${t(locale,"installer.npmmirror")}</a>
       <p class="muted">${t(locale,"installer.sourceHint")}</p></div>` : null}
-    ${downloadUrl ? html`<p>${t(locale,os === "win" ? "support.downloadHint" : "support.posixDownloadHint",{filename})}</p>
+    ${downloadUrl ? html`<p>${t(locale,os === "win" ? "support.customerDownloadHint" : "support.customerPosixDownloadHint",{filename})}</p>
       <a class="btn btn-primary" href="${downloadUrl}">${t(locale,"support.download",{os:system.label})}</a>
       ${os === "win" ? null : html`<div class="code"><div class="code-body">bash ~/Downloads/${filename}</div></div>`}
       <p class="muted">${t(locale,os === "win" ? "support.launchConsent" : "support.posixLaunchConsent")}</p>` : null}

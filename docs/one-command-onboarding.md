@@ -88,6 +88,11 @@ returns a customer invitation page with a Windows/macOS/Linux selector and
 platform-specific download links. Each platform offers an official-source link,
 an npmmirror acceleration link and a manual command fallback.
 
+When creating the invitation, choose a positive whole number and a unit
+(minutes, hours or days), from one minute through seven days in total.
+The default is five minutes. Each invitation keeps its own expiry, shown in
+the invitation page and support history.
+
 On Windows, download and double-click `OpenRemote-Support.cmd`. On macOS, run
 `bash ~/Downloads/OpenRemote-Support.command` in Terminal; on Linux, run
 `bash ~/Downloads/OpenRemote-Support.sh`, adjusting the path if saved elsewhere.
@@ -105,8 +110,10 @@ checks its SHA-256 before execution. Default support installation directories ar
 `${XDG_DATA_HOME:-$HOME/.local/share}/OpenRemoteSupport` on Linux.
 These are separate from ordinary device installation; the flow reuses the installer's runtime,
 package verification and mirror fallback. Downloading alone grants no access and
-does not consume the invitation. The five-minute deadline includes installation;
-if it expires, request a new download link. Old files do not renew invitations.
+does not consume the invitation. The selected duration starts when the link is
+generated and includes download and installation time; if it expires, request
+a new download link. Old files do not renew invitations. After the customer
+connects, this invitation deadline does not end the support session.
 
 Keep the window open during support. Ctrl+C runs the existing stop/revoke flow;
 wait for confirmed revocation before closing the terminal. The Windows launcher
