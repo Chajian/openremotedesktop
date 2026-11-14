@@ -136,6 +136,152 @@ describe("support invitation enhancements", () => {
       expect(response.headers["cache-control"]).toBe("no-store");
     }
   });
+
+  function supportForm(page: string): string {
+    const form = page.match(/<form\b[^>]*action="\/dashboard\/support\/create"[^>]*>[\s\S]*?<\/form>/)?.[0];
+    expect(form).toBeDefined();
+    expect(form).toMatch(/\bnovalidate\b/);
+    return form!;
+  }
+  function inputTag(form: string, name: string): string {
+    return form.match(new RegExp('<input\\b[^>]*name="' + name + '"[^>]*>'))?.[0] ?? "";
+  }
+  function formValue(form: string, name: string): string {
+    return inputTag(form, name).match(/\bvalue="([^"]*)"/)?.[1] ?? "";
+  }
+  function selectedUnit(form: string): string {
+    return form.match(/<option\b[^>]*value="([^"]*)"[^>]*\bselected/)?.[1] ?? "";
+  }
+
+  it.each([
+    { locale: "en", label: "", error: "Enter a support session label" },
+    { locale: "en", label: "   ", error: "Enter a support session label" },
+    { locale: "zh-CN", label: "", error: "请输入 1 到 80 个字符的会话备注" },
+    { locale: "zh-CN", label: "   ", error: "请输入 1 到 80 个字符的会话备注" },
+  ])("recovers a $locale form with label '$label' while keeping two hours", async ({ locale, label, error }) => {
+    const { app, db, login, ownerId } = await fixture({ supportEnabled: true });
+    const { cookie } = await login();
+    const headers = { cookie: cookie + "; odr_lang=" + locale, "content-type": "application/x-www-form-urlencoded" };
+    const page = await app.inject({ url: "/dashboard/support", headers });
+    const invalid = await app.inject({ method: "POST", url: "/dashboard/support/create", headers,
+      payload: new URLSearchParams({ csrf: csrfFrom(page.body), label, inviteDuration: "2", inviteDurationUnit: "hours" }).toString() });
+    expect(invalid.statusCode).toBe(400);
+    const form = supportForm(invalid.body);
+    expect(formValue(form, "label")).toBe(label);
+    expect(formValue(form, "inviteDuration")).toBe("2");
+    expect(selectedUnit(form)).toBe("hours");
+    expect(inputTag(form, "label")).toContain('aria-invalid="true"');
+    expect(inputTag(form, "label")).toContain('aria-describedby="support-label-error"');
+    expect(form).toContain('<p id="support-label-error">' + error);
+    expect(inputTag(form, "inviteDuration")).toContain('aria-invalid="false"');
+    expect(form).not.toContain('id="support-invite-duration-error"');
+    expect(invalid.headers["content-security-policy"]).toBe(page.headers["content-security-policy"]);
+    expect(db.prepare("SELECT * FROM support_sessions").all()).toHaveLength(0);
+
+    const recovered = await app.inject({ method: "POST", url: "/dashboard/support/create", headers,
+      payload: new URLSearchParams({ csrf: csrfFrom(form), label: "  Recovered support  ",
+        inviteDuration: formValue(form, "inviteDuration"), inviteDurationUnit: selectedUnit(form) }).toString() });
+    expect(recovered.statusCode).toBe(200);
+    const rows = db.prepare("SELECT owner_id, label, created_at, invite_expires_at FROM support_sessions").all() as Array<{
+      owner_id: string; label: string; created_at: number; invite_expires_at: number;
+    }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.owner_id).toBe(ownerId);
+    expect(rows[0]!.label).toBe("Recovered support");
+    expect(rows[0]!.invite_expires_at - rows[0]!.created_at).toBe(7_200_000);
+  });
+
+  it("keeps independent label and duration errors with escaped overlength input", async () => {
+    const { app, db, login } = await fixture({ supportEnabled: true });
+    const { cookie } = await login();
+    const page = await app.inject({ url: "/dashboard/support", headers: { cookie } });
+    // Raw length is 81, even though trim would shorten it below the limit.
+    const label = "x".repeat(75) + '"<>&  ';
+    const invalid = await app.inject({ method: "POST", url: "/dashboard/support/create", headers: { cookie },
+      payload: { csrf: csrfFrom(page.body), label, inviteDuration: "8", inviteDurationUnit: "days" } });
+    expect(invalid.statusCode).toBe(400);
+    const form = supportForm(invalid.body);
+    expect(formValue(form, "label")).toBe("x".repeat(75) + "&quot;&lt;&gt;&amp;  ");
+    expect(form).not.toContain(label);
+    expect(inputTag(form, "label")).toContain('aria-invalid="true"');
+    expect(inputTag(form, "label")).toContain('aria-describedby="support-label-error"');
+    expect(form).toContain('id="support-label-error"');
+    expect(inputTag(form, "inviteDuration")).toContain('aria-invalid="true"');
+    expect(inputTag(form, "inviteDuration")).toContain('aria-describedby="support-invite-duration-hint support-invite-duration-error"');
+    expect(form).toContain('id="support-invite-duration-error"');
+    expect(formValue(form, "inviteDuration")).toBe("8");
+    expect(selectedUnit(form)).toBe("days");
+    expect(db.prepare("SELECT * FROM support_sessions").all()).toHaveLength(0);
+  });
+
+  it.each([
+    { kind: "missing", value: undefined },
+    { kind: "null", value: null },
+    { kind: "number", value: 42 },
+    { kind: "boolean", value: true },
+    { kind: "array", value: ["Support"] },
+    { kind: "object", value: { name: "Support" } },
+  ])("rejects a $kind label without coercing it or losing valid duration fields", async ({ value }) => {
+    const { app, db, login } = await fixture({ supportEnabled: true });
+    const { cookie } = await login();
+    const page = await app.inject({ url: "/dashboard/support", headers: { cookie } });
+    const invalid = await app.inject({ method: "POST", url: "/dashboard/support/create", headers: { cookie },
+      payload: { csrf: csrfFrom(page.body), label: value, inviteDuration: "2", inviteDurationUnit: "hours" } });
+    expect(invalid.statusCode).toBe(400);
+    const form = supportForm(invalid.body);
+    expect(formValue(form, "label")).toBe("");
+    expect(formValue(form, "inviteDuration")).toBe("2");
+    expect(selectedUnit(form)).toBe("hours");
+    expect(form).toContain('id="support-label-error"');
+    expect(form).not.toContain('id="support-invite-duration-error"');
+    expect(form).not.toContain("[object Object]");
+    expect(db.prepare("SELECT * FROM support_sessions").all()).toHaveLength(0);
+  });
+
+  it("keeps malformed fields recoverable without stringifying objects", async () => {
+    const { app, db, login } = await fixture({ supportEnabled: true });
+    const { cookie } = await login();
+    const page = await app.inject({ url: "/dashboard/support", headers: { cookie } });
+    const invalid = await app.inject({ method: "POST", url: "/dashboard/support/create", headers: { cookie },
+      payload: { csrf: csrfFrom(page.body), label: { text: "Support" },
+        inviteDuration: { value: 2 }, inviteDurationUnit: ["hours"] } });
+    expect(invalid.statusCode).toBe(400);
+    const form = supportForm(invalid.body);
+    expect(formValue(form, "label")).toBe("");
+    expect(formValue(form, "inviteDuration")).toBe("");
+    expect(form).toContain('<option value="" disabled selected>');
+    expect(form).toContain('id="support-label-error"');
+    expect(form).toContain('id="support-invite-duration-error"');
+    expect(form).not.toContain("[object Object]");
+    expect(db.prepare("SELECT * FROM support_sessions").all()).toHaveLength(0);
+  });
+
+  it("preserves the legacy five-minute default while recovering a label error", async () => {
+    const { app, db, login } = await fixture({ supportEnabled: true });
+    const { cookie } = await login();
+    const headers = { cookie, "content-type": "application/x-www-form-urlencoded" };
+    const page = await app.inject({ url: "/dashboard/support", headers });
+    const invalid = await app.inject({ method: "POST", url: "/dashboard/support/create", headers,
+      payload: new URLSearchParams({ csrf: csrfFrom(page.body), label: "" }).toString() });
+    expect(invalid.statusCode).toBe(400);
+    const form = supportForm(invalid.body);
+    expect(formValue(form, "inviteDuration")).toBe("5");
+    expect(selectedUnit(form)).toBe("minutes");
+    expect(form).toContain('id="support-label-error"');
+    expect(form).not.toContain('id="support-invite-duration-error"');
+    expect(db.prepare("SELECT * FROM support_sessions").all()).toHaveLength(0);
+    const recovered = await app.inject({ method: "POST", url: "/dashboard/support/create", headers,
+      payload: new URLSearchParams({ csrf: csrfFrom(form), label: "x".repeat(80),
+        inviteDuration: formValue(form, "inviteDuration"), inviteDurationUnit: selectedUnit(form) }).toString() });
+    expect(recovered.statusCode).toBe(200);
+    const rows = db.prepare("SELECT label, created_at, invite_expires_at FROM support_sessions").all() as Array<{
+      label: string; created_at: number; invite_expires_at: number;
+    }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.label).toHaveLength(80);
+    expect(rows[0]!.invite_expires_at - rows[0]!.created_at).toBe(300_000);
+  });
+
 });
 
 describe("Bridge UI routes", () => {

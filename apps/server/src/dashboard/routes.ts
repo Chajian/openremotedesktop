@@ -159,18 +159,20 @@ export function registerDashboardRoutes(
     if (!auth || !requireCsrf(request, reply, auth, csrf, shell(request, auth, "support"), "/dashboard/support")) return;
     const body = bodyRecord(request);
     const label = body.label;
-    if (typeof label !== "string" || !label.trim() || label.length > 80)
-      return dashboardError(request, reply, auth, 400, "invalid", "/dashboard/support");
+    const labelError = typeof label !== "string" || !label.trim() || label.length > 80;
     const expiresInMinutes = supportInviteMinutes(body);
-    if (expiresInMinutes === null) {
+    if (labelError || expiresInMinutes === null) {
       const statuses = new Map(deps.registry.snapshot().map(s => [s.deviceId, s.state]));
       interactivePage(reply);
       return reply.code(400).type("text/html; charset=utf-8").send(renderSupportDashboard(
         shell(request, auth, "support"), deps.support.listOwned(auth.principal.ownerId), statuses, true,
-        {label, expiryError:true,
-          inviteDuration:typeof body.inviteDuration === "string" || typeof body.inviteDuration === "number"
-            ? String(body.inviteDuration) : "",
-          inviteDurationUnit:typeof body.inviteDurationUnit === "string" ? body.inviteDurationUnit : ""},
+        {label:typeof label === "string" ? label : "", labelError, expiryError:expiresInMinutes === null,
+          // An old form that omits both duration fields still has a valid five-minute default.
+          ...(body.inviteDuration === undefined && body.inviteDurationUnit === undefined ? {} : {
+            inviteDuration:typeof body.inviteDuration === "string" || typeof body.inviteDuration === "number"
+              ? String(body.inviteDuration) : "",
+            inviteDurationUnit:typeof body.inviteDurationUnit === "string" ? body.inviteDurationUnit : "",
+          })},
       ));
     }
     const { session, invite } = deps.support.create(auth.principal.ownerId, label, expiresInMinutes);

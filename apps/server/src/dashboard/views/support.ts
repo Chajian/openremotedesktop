@@ -15,6 +15,7 @@ const durationUnits = [
 
 export interface SupportFormState {
   label?: string;
+  labelError?: boolean;
   inviteDuration?: string;
   inviteDurationUnit?: string;
   expiryError?: boolean;
@@ -36,7 +37,8 @@ export function renderSupportDashboard(
       ${hiddenInput("csrf", ctx.csrf)}
       <div class="field"><label for="support-label">${t(ctx.locale, "support.name")}</label>
         <input class="input" name="label" id="support-label" maxlength="80" value="${formState.label ?? ""}"
-         placeholder="${t(ctx.locale, "support.namePlaceholder")}" required></div>
+         placeholder="${t(ctx.locale, "support.namePlaceholder")}" required aria-invalid="${formState.labelError ? "true" : "false"}"${formState.labelError ? html` aria-describedby="support-label-error"` : null}>
+        ${formState.labelError ? callout("err", null, html`<p id="support-label-error">${t(ctx.locale, "support.nameError")}</p>`) : null}</div>
       <div class="row" style="align-items:flex-end;flex-wrap:wrap;margin-top:16px;max-width:440px">
         <div class="field" style="flex:1;min-width:140px"><label for="support-invite-duration">${t(ctx.locale, "support.inviteDuration")}</label>
           <input class="input" name="inviteDuration" id="support-invite-duration" type="number" min="1" max="${selectedUnit?.max ?? MAX_SUPPORT_INVITE_MINUTES}" step="1"
