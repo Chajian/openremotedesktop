@@ -4,6 +4,7 @@ import type { FastifyInstance } from "fastify";
  * Progressive enhancement only: the native forms remain usable without JavaScript.
  * Polling refreshes status and recovery controls together without interrupting edits;
  * network interruptions leave the page usable. Only indentation is stripped when served.
+ * Initial unit synchronization preserves server validation feedback.
  * Invite forms enable native validation once their unit-dependent maximum can update;
  * without this enhancement, the server validates submissions so unit changes stay usable.
  */
@@ -54,19 +55,20 @@ export const UI_SCRIPT = String.raw`(() => {
   all('select[data-duration-input]').forEach(unit=> {
     const input=document.getElementById(unit.dataset.durationInput);
     if(!input)return;
-    const description=input.getAttribute('aria-describedby')||'';
-    const update=event=> {
-      const max=unit.selectedOptions[0]?.dataset.max;
-      if(max)input.max=max;
+    const hint=input.getAttribute('aria-describedby')||'';
+    const syncMax=()=>input.max=unit.selectedOptions[0]?.dataset.max||input.max;
+    const update=e=> {
+      syncMax();
       const invalid=!input.validity.valid||!unit.validity.valid;
       [input,unit].forEach(field=> {
         field.setAttribute('aria-invalid',invalid);
-        field.setAttribute('aria-describedby',invalid?description:description.replace(' '+input.id+'-error', ''));
+        field.setAttribute('aria-describedby',invalid?hint:hint.replace(' '+input.id+'-error', ''));
       });
-      if(event.type==='change'&&input.validity.rangeOverflow)input.reportValidity();
+      if(e.type==='change'&&input.validity.rangeOverflow)input.reportValidity();
     };
     unit.addEventListener('change',update);
     input.addEventListener('input',update);
+    syncMax();
     input.form?.removeAttribute('novalidate');
   });
   const clean = (text) => String(text).toUpperCase().replace(/[^ABCDEFGHJKLMNPQRSTUVWXYZ23456789]/g, '');

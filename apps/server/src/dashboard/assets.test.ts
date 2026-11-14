@@ -80,7 +80,10 @@ async function dom(options: { rejectCopy?: boolean; noTargets?: boolean } = {}) 
   return { body, form, input, submit, copy, label, suggestion, name, confirm, dangerSubmit, copied, timers, cells: () => body.querySelectorAll(".cell") };
 }
 
-async function durationDom(state: SupportFormState = {}) {
+async function durationDom(
+  state: SupportFormState = {},
+  beforeScript?: (fields: { input: Element; unit: Element; form: Element }) => void,
+) {
   const response = await asset();
   const page = renderSupportDashboard(ctx, [], new Map(), true, state);
   const inputTag = page.match(/<input\b[^>]*name="inviteDuration"[^>]*>/)?.[0] ?? "";
@@ -104,6 +107,7 @@ async function durationDom(state: SupportFormState = {}) {
     element.setAttribute("aria-invalid", attribute(tag, "aria-invalid"));
     element.setAttribute("aria-describedby", attribute(tag, "aria-describedby"));
   }
+  beforeScript?.({ input, unit, form });
   runInNewContext(response.body, { document: {
     querySelectorAll: (selector: string) => selector === "select[data-duration-input]" && unit.dataset.durationInput ? [unit] : [],
     getElementById: (id: string) => id === input.id ? input : null,
@@ -183,6 +187,31 @@ describe("dashboard enhancement asset", () => {
     expect(d.input.getAttribute("aria-invalid")).toBe("false");
     expect(d.unit.getAttribute("aria-invalid")).toBe("false");
     expect(d.input.validityReports).toBe(2);
+  });
+  it.each([
+    { serverUnit: "days", selectedUnit: "hours", max: "168", expiryError: true },
+    { serverUnit: "minutes", selectedUnit: "days", max: "7", expiryError: false },
+  ])("syncs the current $selectedUnit limit before enabling validation after a delayed script", async ({ serverUnit, selectedUnit, max, expiryError }) => {
+    let maxWhenEnabled: string | undefined;
+    const d = await durationDom({ inviteDuration: "8", inviteDurationUnit: serverUnit, expiryError }, ({ input, unit, form }) => {
+      unit.value = selectedUnit;
+      const removeAttribute = form.removeAttribute.bind(form);
+      form.removeAttribute = name => {
+        if (name === "novalidate") maxWhenEnabled = input.max;
+        removeAttribute(name);
+      };
+    });
+    expect(maxWhenEnabled).toBe(max);
+    expect(d.form.getAttribute("novalidate")).toBeNull();
+    expect(d.input.max).toBe(max);
+    expect(d.input.min).toBe("1"); expect(d.input.step).toBe("1");
+    expect(d.input.value).toBe("8"); expect(d.unit.value).toBe(selectedUnit);
+    for (const field of [d.input, d.unit]) {
+      expect(field.getAttribute("aria-invalid")).toBe(String(expiryError));
+      expect(field.getAttribute("aria-describedby")).toBe("support-invite-duration-hint" + (expiryError ? " support-invite-duration-error" : ""));
+      expect(field.focused).toBe(false);
+    }
+    expect(d.input.validityReports).toBe(0);
   });
   it("preserves a server error on load and clears invalid state when the value is corrected", async () => {
     const d = await durationDom({ inviteDuration: "8", inviteDurationUnit: "days", expiryError: true });
