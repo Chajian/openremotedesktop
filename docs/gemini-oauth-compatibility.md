@@ -20,7 +20,7 @@ See [security model](security.md) for the security contract. No schema, Agent, R
 - First complete workspace run: 875 passed, 2 failed, 2 skipped. Server 440/440 passed. Both failures were existing Agent HTTP/WebSocket integration tests. No Agent or shared package changes. A targeted candidate rerun of the two files produced 26 failures/14 passes; a clean checkout of the exact unchanged baseline reproduced failures in both files (17 failed/23 passed). Results vary between runs; the full-suite gate remains FAIL, and the Agent issue is outside this change.
 - MCP E2E: 28/28 PASS, including isolated real transport and subprocess scenarios.
 - Governance: 14/14 PASS and document structure check PASS.
-- Firefox: NOT_TESTED at the time of the Chrome and automated regression runs.
+- Firefox 142.0.1: BLOCKED / not validated. Redirect interception did not capture the complete chain; a separate real loopback HTTPS attempt failed with SEC_ERROR_UNKNOWN_ISSUER before reaching consent. No certificate-verification bypass was used. This is a fixture/trust failure, not evidence of product incompatibility.
 - Actual Gemini, ChatGPT, Codex, Claude and Grok integrations: NOT_TESTED. The tests use isolated databases and synthetic clients, not production accounts, tokens or devices.
 
 ## Remaining gates
@@ -35,3 +35,5 @@ Status: IMPLEMENTED / local review candidate. Not READY_FOR_PRODUCTION_REVIEW an
 4. On unexpected non-Gemini behavior, failed authorization, unsafe callback handling, or unstable Relay recovery, disable the flag and restart during a controlled window. If necessary, restore the previous image and configuration. Preserve the current database and post-deployment legitimate user/authorization/device state; database restoration is not the normal rollback path.
 
 No production deployment, credential reuse, device revocation, push or merge was performed.
+
+- Final Server rerun on matching source blobs: 442/442 PASS. Final server typecheck: PASS. Actual Gemini platform validation remains NOT_TESTED.
