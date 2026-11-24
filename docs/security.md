@@ -43,6 +43,15 @@ OAuth uses:
 - resource binding to the MCP endpoint;
 - `mcp` and `offline_access` scopes.
 
+The optional, default-off `ODR_GEMINI_CALLBACK_COMPAT_ENABLED` flag changes
+only the final validated consent POST response for the HTTPS Google callback
+origin and its `/r/` paths. It returns a non-cacheable HTML navigation page
+with no external resources, no referrer, and strict CSP instead of the usual
+302. The original code/error, state, issuer and fixed callback parameters are
+checked and preserved; the callback origin does not establish client identity
+or confer privileges. All other clients retain their existing response.
+Production use requires separate platform validation and deployment approval.
+
 Device pairing uses a high-entropy machine code plus a short human confirmation code.
 
 ## Authorized MCP clients

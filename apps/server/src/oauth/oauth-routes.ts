@@ -14,6 +14,7 @@ import type { OAuthService } from "./authorization-server.js";
 import { CsrfProtection } from "../dashboard/csrf.js";
 import { privateBrowserPage, safeReturnTo } from "../dashboard/browser-auth.js";
 import { renderConsentPage } from "./consent-page.js";
+import { renderGeminiNavigation, usesGeminiNavigation, validateGeminiLocation, type ConsentOutcome } from "./callback-response.js";
 
 function oauthRequest(request: FastifyRequest): OAuthRequest {
   const headers = Object.fromEntries(
@@ -37,6 +38,32 @@ function sendOAuthResponse(
     return reply.code(302).send();
   }
   return reply.code(response.status).send(response.body);
+}
+
+function sendGeminiNavigation(
+  reply: FastifyReply,
+  config: ServerConfig,
+  redirectUri: string | undefined,
+  location: unknown,
+  outcome: ConsentOutcome,
+  issuer: string,
+  state: string | undefined,
+  headers: ResponseInterface["headers"] = {},
+): FastifyReply | undefined {
+  if (!redirectUri || !usesGeminiNavigation(redirectUri, config.geminiCallbackCompatEnabled === true)) return;
+  const target = validateGeminiLocation(redirectUri, location, outcome, issuer, state);
+  const replacedHeaders = new Set(["location", "content-type", "content-length", "cache-control",
+    "referrer-policy", "x-frame-options", "x-content-type-options", "content-security-policy"]);
+  for (const [key, value] of Object.entries(headers)) {
+    if (value !== undefined && !replacedHeaders.has(key.toLowerCase())) reply.header(key, value);
+  }
+  reply.removeHeader("location");
+  reply.header("Cache-Control", "no-store");
+  reply.header("Referrer-Policy", "no-referrer");
+  reply.header("X-Frame-Options", "DENY");
+  reply.header("X-Content-Type-Options", "nosniff");
+  reply.header("Content-Security-Policy", "default-src 'none'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'");
+  return reply.code(200).type("text/html; charset=utf-8").send(renderGeminiNavigation(target, outcome));
 }
 
 function sendOAuthError(error: unknown, reply: FastifyReply): FastifyReply {
@@ -64,7 +91,7 @@ export function registerOAuthFlowRoutes(
   app: FastifyInstance,
   oauth: OAuthService,
   sessions: SessionRepository,
-  _config: ServerConfig,
+  config: ServerConfig,
 ): void {
   const consentCsrf = new CsrfProtection();
   app.route({ method: ["GET", "POST"], url: "/oauth/authorize", handler: async (request, reply) => {
@@ -104,7 +131,10 @@ export function registerOAuthFlowRoutes(
         url.searchParams.set("error", "access_denied");
         if (typeof query.state === "string") url.searchParams.set("state", query.state);
         url.searchParams.set("iss", oauth.issuer);
-        return reply.code(302).header("location", url.toString()).send();
+        const location = url.toString();
+        return sendGeminiNavigation(reply, config, validated.redirectUri, location, "denied",
+          oauth.issuer, typeof query.state === "string" ? query.state : undefined)
+          ?? reply.code(302).header("location", location).send();
       }
       if (body.decision !== "approve") return reply.code(400).send({ error: "invalid_request" });
       validated.user = { id: principal.ownerId };
@@ -115,6 +145,12 @@ export function registerOAuthFlowRoutes(
         oauth.registeredClients.approveClient(String(query.client_id), principal.ownerId);
       }
       appendIssuer(response, oauth.issuer);
+      if (response.status === 302) {
+        // The library omits an empty state on successful authorization.
+        const navigation = sendGeminiNavigation(reply, config, validated.redirectUri, response.headers.location,
+          "approved", oauth.issuer, validated.state || undefined, response.headers);
+        if (navigation) return navigation;
+      }
       return sendOAuthResponse(reply, response);
     } catch (error) {
       return sendOAuthError(error, reply);

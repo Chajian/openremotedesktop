@@ -13,22 +13,26 @@ function field(html: string, name: string): string {
     .replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
 }
 function cookie(value: unknown) { return String(value).split(";")[0]!; }
-async function fixture() {
+async function fixture(
+  redirectUri = "https://client.example/callback",
+  geminiCallbackCompatEnabled = false,
+  state = "return-state",
+) {
   const db = createDatabase(":memory:");
   const app = buildApp({ db, config: { databasePath: ":memory:",
-    publicBaseUrl: new URL("https://odr.example.test"), environment: "production" } });
+    publicBaseUrl: new URL("https://odr.example.test"), environment: "production", geminiCallbackCompatEnabled } });
   cleanup.push(async () => { await app.close(); db.close(); });
   const password = "browser-regression-only-passphrase";
   await app.inject({ method: "POST", url: "/api/bootstrap", payload: { password } });
   const registered = await app.inject({ method: "POST", url: "/oauth/register", payload: {
-    redirect_uris: ["https://client.example/callback"], grant_types: ["authorization_code", "refresh_token"],
+    redirect_uris: [redirectUri], grant_types: ["authorization_code", "refresh_token"],
     response_types: ["code"], token_endpoint_auth_method: "none",
   } });
   const clientId = registered.json().client_id as string;
   const verifier = "a".repeat(64);
   const authorizationUrl = "/oauth/authorize?" + new URLSearchParams({
-    client_id: clientId, redirect_uri: "https://client.example/callback", response_type: "code",
-    resource: "https://odr.example.test/mcp", scope: "mcp offline_access", state: "return-state",
+    client_id: clientId, redirect_uri: redirectUri, response_type: "code",
+    resource: "https://odr.example.test/mcp", scope: "mcp offline_access", state,
     code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256",
   });
   async function login(returnTo: string) {
@@ -129,6 +133,124 @@ describe("browser OAuth login and explicit consent", () => {
   });
 });
 
+
+describe("Gemini consent navigation integration", () => {
+  const gemini = "https://oauth-redirect.googleusercontent.com/r/fixture";
+  function callbackFromPage(page: string) {
+    const href = /<a href="([^"]*)" rel="noreferrer">/.exec(page)?.[1];
+    if (!href) throw new Error("Missing callback link");
+    return new URL(href.replaceAll("&quot;", '"').replaceAll("&#39;", "'")
+      .replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&"));
+  }
+  async function decide(f: Awaited<ReturnType<typeof fixture>>, decision: "approve" | "deny") {
+    const { session } = await f.login(f.authorizationUrl);
+    const page = await f.app.inject({ method: "GET", url: f.authorizationUrl, headers: { cookie: session } });
+    expect(page.statusCode).toBe(200);
+    return f.app.inject({ method: "POST", url: "/oauth/authorize", headers: { cookie: session },
+      payload: { csrf: field(page.body, "csrf"), returnTo: field(page.body, "returnTo"), decision } });
+  }
+  it.each([
+    [gemini, false], ["https://client.example/callback", true],
+    ["https://oauth-redirect.googleusercontent.com/other/fixture", true],
+  ] as const)("preserves the 302 response for %s with flag %s", async (uri, enabled) => {
+    const f = await fixture(uri, enabled);
+    for (const decision of ["approve", "deny"] as const) {
+      const response = await decide(f, decision);
+      expect(response.statusCode).toBe(302);
+      expect(response.headers.location).toBeTypeOf("string");
+    }
+  });
+  it("returns a private HTML page without changing code, PKCE, state, issuer, or fixed callback parameters", async () => {
+    const uri = gemini + "?fixed=one&fixed=two&escaped=%22%26";
+    const state = 'return & " 雪';
+    const f = await fixture(uri, true, state);
+    const response = await decide(f, "approve");
+    expect(response.statusCode).toBe(200);
+    expect(response.headers.location).toBeUndefined();
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.headers["referrer-policy"]).toBe("no-referrer");
+    expect(response.headers["x-frame-options"]).toBe("DENY");
+    expect(response.headers["x-content-type-options"]).toBe("nosniff");
+    expect(response.headers["content-security-policy"]).toBe("default-src 'none'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'");
+    expect(response.body).toContain("Authorization approved");
+    expect(response.body).not.toMatch(/<(?:script|link|img|form)\b/i);
+    const callback = callbackFromPage(response.body);
+    expect(callback.origin + callback.pathname).toBe(gemini);
+    expect(callback.searchParams.getAll("fixed")).toEqual(["one", "two"]);
+    expect(callback.searchParams.get("escaped")).toBe('"&');
+    expect(callback.searchParams.get("state")).toBe(state);
+    expect(callback.searchParams.get("iss")).toBe("https://odr.example.test/");
+    expect(callback.searchParams.getAll("code")).toHaveLength(1);
+    expect(f.db.prepare("SELECT COUNT(*) AS n FROM oauth_codes").get()).toEqual({ n: 1 });
+    const token = (verifier: string) => f.app.inject({ method: "POST", url: "/oauth/token",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: new URLSearchParams({ grant_type: "authorization_code", client_id: f.clientId,
+        redirect_uri: uri, code: callback.searchParams.get("code")!, code_verifier: verifier }).toString() });
+    expect((await token("z".repeat(64))).statusCode).toBe(400);
+    const exchanged = await token(f.verifier);
+    expect(exchanged.statusCode).toBe(200);
+    const refresh = (refreshToken: string) => f.app.inject({ method: "POST", url: "/oauth/token",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: new URLSearchParams({ grant_type: "refresh_token", client_id: f.clientId,
+        refresh_token: refreshToken }).toString() });
+    const originalRefresh = exchanged.json().refresh_token as string;
+    const rotated = await refresh(originalRefresh);
+    expect(rotated.statusCode).toBe(200);
+    expect(rotated.json().refresh_token).not.toBe(originalRefresh);
+    expect((await refresh(originalRefresh)).statusCode).toBe(400);
+    expect((await token(f.verifier)).statusCode).toBe(400);
+  });
+  it("keeps denial semantics and does not issue a code", async () => {
+    const f = await fixture(gemini, true);
+    const response = await decide(f, "deny");
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain("Authorization denied");
+    expect(response.body).not.toContain("Authorization approved");
+    const callback = callbackFromPage(response.body);
+    expect(callback.searchParams.get("error")).toBe("access_denied");
+    expect(callback.searchParams.get("code")).toBeNull();
+    expect(callback.searchParams.get("state")).toBe("return-state");
+    expect(callback.searchParams.get("iss")).toBe("https://odr.example.test/");
+    expect(f.db.prepare("SELECT COUNT(*) AS n FROM oauth_codes").get()).toEqual({ n: 0 });
+  });
+  it("rejects an expired code obtained through the navigation page", async () => {
+    const f = await fixture(gemini, true);
+    const response = await decide(f, "approve");
+    expect(response.statusCode).toBe(200);
+    const callback = callbackFromPage(response.body);
+    f.db.prepare("UPDATE oauth_codes SET expires_at = 1").run();
+    const expired = await f.app.inject({ method: "POST", url: "/oauth/token",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: new URLSearchParams({ grant_type: "authorization_code", client_id: f.clientId,
+        redirect_uri: gemini, code: callback.searchParams.get("code")!, code_verifier: f.verifier }).toString() });
+    expect(expired.statusCode).toBe(400);
+  });
+  it("does not intercept unregistered callbacks or invalid resources", async () => {
+    const f = await fixture(gemini, true);
+    const { session } = await f.login(f.authorizationUrl);
+    for (const [name, value] of [["redirect_uri", gemini + "-unregistered"], ["resource", "https://other.example/mcp"]] as const) {
+      const url = new URL(f.authorizationUrl, "https://odr.example.test");
+      url.searchParams.set(name, value);
+      const rejected = await f.app.inject({ method: "GET", url: url.pathname + url.search, headers: { cookie: session } });
+      expect(rejected.statusCode).toBeGreaterThanOrEqual(400);
+      expect(rejected.statusCode).toBeLessThan(500);
+      expect(rejected.headers.location).toBeUndefined();
+    }
+    expect(f.db.prepare("SELECT COUNT(*) AS n FROM oauth_codes").get()).toEqual({ n: 0 });
+  });
+  it("does not intercept login redirects or rejected CSRF requests", async () => {
+    const f = await fixture(gemini, true);
+    const unauthenticated = await f.app.inject({ method: "GET", url: f.authorizationUrl });
+    expect(unauthenticated.statusCode).toBe(302);
+    expect(String(unauthenticated.headers.location)).toMatch(/^\/dashboard\/login/);
+    const { session } = await f.login(f.authorizationUrl);
+    const rejected = await f.app.inject({ method: "POST", url: "/oauth/authorize", headers: { cookie: session },
+      payload: { decision: "approve", returnTo: f.authorizationUrl, csrf: "wrong" } });
+    expect(rejected.statusCode).toBe(403);
+    expect(rejected.headers.location).toBeUndefined();
+    expect(f.db.prepare("SELECT COUNT(*) AS n FROM oauth_codes").get()).toEqual({ n: 0 });
+  });
+});
 
 describe("Bridge consent presentation", () => {
   const input = { returnTo: "/oauth/authorize?client_id=fixture&scope=mcp", csrf: 'a"b', clientId: '<client>&id', redirectUri: "https://client.example/callback?x=1&y=2", scope: "mcp offline_access" };
