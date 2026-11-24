@@ -44,7 +44,7 @@ async function expectOk(response: Response): Promise<Response> {
 export type TestServer = Awaited<ReturnType<typeof startTestServer>>;
 
 export async function startTestServer(
-  options: { databasePath?: string; port?: number; supportEnabled?: boolean } = {},
+  options: { databasePath?: string; port?: number; supportEnabled?: boolean; geminiCallbackCompatEnabled?: boolean } = {},
 ) {
   const dataDir =
     options.databasePath === undefined
@@ -61,6 +61,7 @@ export async function startTestServer(
       publicBaseUrl: baseUrl,
       environment: "test",
       supportEnabled: options.supportEnabled === true,
+      geminiCallbackCompatEnabled: options.geminiCallbackCompatEnabled === true,
     },
   });
   let relayApp: ReturnType<typeof buildApp> | undefined;

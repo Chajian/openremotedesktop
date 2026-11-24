@@ -7,6 +7,8 @@ export type ServerConfig = {
   additionalPublicBaseUrls?: URL[];
   environment: ServerEnvironment;
   agentInstallEnabled?: boolean;
+  /** Default-off browser-navigation workaround for validated Gemini callbacks. */
+  geminiCallbackCompatEnabled?: boolean;
   /** Pilot gate for temporary customer support; off until supported Agent is released. */
   supportEnabled?: boolean;
   /** Exact published version whose packaged CLI implements support mode. */
@@ -110,6 +112,10 @@ export function loadServerConfig(
   if (Boolean(githubClientId) !== Boolean(githubClientSecret)) {
     throw new Error("ODR_GITHUB_CLIENT_ID and ODR_GITHUB_CLIENT_SECRET must both be configured");
   }
+  const geminiCallbackCompat = env.ODR_GEMINI_CALLBACK_COMPAT_ENABLED;
+  if (geminiCallbackCompat !== undefined && geminiCallbackCompat !== "true" && geminiCallbackCompat !== "false") {
+    throw new Error("ODR_GEMINI_CALLBACK_COMPAT_ENABLED must be true or false");
+  }
   return {
     ...(githubClientId && githubClientSecret ? { githubClientId, githubClientSecret } : {}),
     databasePath,
@@ -117,6 +123,7 @@ export function loadServerConfig(
     ...(additionalPublicBaseUrls.length ? { additionalPublicBaseUrls } : {}),
     environment,
     agentInstallEnabled: env.ODR_AGENT_INSTALL_ENABLED === "true",
+    geminiCallbackCompatEnabled: geminiCallbackCompat === "true",
     supportEnabled: env.ODR_SUPPORT_ENABLED === "true",
     ...(supportAgentVersion ? {supportAgentVersion} : {}),
     deviceDeletionAuditRetentionDays,
