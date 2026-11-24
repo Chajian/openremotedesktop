@@ -35,6 +35,15 @@ A Cloudflare Quick Tunnel is unsuitable for the full MCP acceptance because its 
 
 Complete Gemini consent with explicit user action, then verify token exchange, initialize, tools/list, list_devices and get_device_status. Confirm the other platforms separately. Investigate the existing Agent test failures or explicitly assess and accept their risk before declaring full regression success.
 
+### Named tunnel connectivity follow-up
+
+- The dedicated remotely managed test tunnel was created through the operator's authenticated Cloudflare session. A locally supplied scoped tunnel token passed the expected tunnel-ID check. The isolated Windows Server started, initialized a new Owner, published the independent issuer and returned HTTP 401 to anonymous MCP access.
+- The real connector could not register at the Cloudflare edge. QUIC attempts timed out; the automatic HTTP/2 fallback also failed with TLS handshake EOF. No registered tunnel connection was observed. A public DNS query returned NXDOMAIN for the proposed staging hostname. Real Gemini OAuth/MCP acceptance is still NOT_TESTED.
+- A verified TLS probe using the upstream cloudflared CA bundle and the official HTTP/2 server name reproduced the failure on the first Windows host. A second Windows test host and an available Linux test host each verified TLS 1.3 to both sampled edge endpoints. These are transport prerequisites, not proof of authenticated tunnel registration. No certificate validation or network security control was disabled.
+- The first staging Server and its own connector were stopped; the launcher removed the isolated SQLite database and logs. The staging port was free, and the production health endpoint returned HTTP 200.
+- On the alternate Windows test host, the reviewed runtime source blobs matched the candidate, and a fresh isolated local instance passed HTTP 200 health, HTTP 201 temporary Owner creation, issuer equality and HTTP 401 anonymous MCP checks. The instance and its temporary database were removed after preflight.
+- BLOCKED: public route configuration and connector authorization on the alternate host remain outstanding. The original connector's token was discarded with the process; do not recover credentials from process memory or unrelated services. The authenticated browser context was unavailable for Cloudflare management. The existing dedicated cloud tunnel is accounted for but its cloud-side deletion is not verified. Preserve the cleanup requirement and do not mark the task closed or ready for production.
+
 ## Temporary staging lifecycle (required)
 
 The isolated public Gemini acceptance environment is disposable, not a second production service. A proposed dedicated hostname is subject to an authorized DNS availability check. Use only separately owned staging ingress, Server, database, Owner, OAuth clients, Agent and Relay; no production identity or data may be copied. Do not expose a host filesystem or reuse another service's tunnel credentials.
