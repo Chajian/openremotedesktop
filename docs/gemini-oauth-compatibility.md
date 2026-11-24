@@ -25,6 +25,20 @@ See [security model](security.md) for the security contract. No schema, Agent, R
 - Final E2E suite: 29/29 PASS, including this new end-to-end test. An initialize request with the usual MCP Accept header returned `text/event-stream`.
 - Actual Gemini, ChatGPT, Codex, Claude and Grok integrations: NOT_TESTED. The tests use isolated databases and synthetic clients, not production accounts, tokens or devices.
 
+### Candidate-backed Chromium acceptance fixture
+
+Run on a disposable Chromium profile with Node 24 and the workspace dependencies:
+
+    node --import tsx scripts/test-gemini-oauth-browser.mjs <chromium executable>
+
+The new fixture forwards real browser navigation/form submissions to the reviewed Fastify OAuth handlers through CDP interception; it uses the real consent template, response selection, generated authorization codes, callback HTML, PKCE exchange and MCP authentication. The Google callback and downstream redirect remain controlled fixtures; resolver rules prevent real requests to the callback host. Each case has a fresh in-memory database and a fixture-only authenticated Owner session. The manual fallback case suppresses the refresh element to exercise the actual rendered link. No production data, browser profile, credential, or Google session is used.
+
+Two consecutive runs passed all six scenarios: flag-off single-hop, flag-off chained CSP rejection, flag-on automatic approval, flag-on manual approval, flag-on denial, and flag-on non-Gemini client with unchanged redirect. Successful approval cases preserved state, issuer and repeated fixed query parameters; token exchange and MCP initialize returned HTTP 200. A repeated code exchange returned HTTP 400 and the original descendant access token was subsequently rejected with HTTP 401. The denial case preserved access_denied without issuing a code. Output records only case names and status, not OAuth code, state, token or callback URL.
+
+The first development attempts exposed fixture navigation timing/viewport problems and an incorrectly ordered replay check: replay revokes descendant tokens, so MCP initialization must precede the replay assertion. These were corrected in the test harness; no application behavior changed. A fresh focused regression run on matching runtime blobs passed 20/20 callback/browser-auth tests and 1/1 Gemini OAuth-to-isolated-real-Agent E2E test. The prior full-suite gate remains non-passing due to the unrelated existing Agent failures.
+
+External corroboration, not project acceptance: an October 15, 2026 developer report in the [Google AI Developers Forum discussion](https://discuss.ai.google.dev/t/gemini-spark-custom-mcp-oauth-stops-after-302-callback-and-never-calls-token/177327) describes this same multi-origin form-action failure and reports that a Gemini-specific HTTP 200 navigation page restored that developer's real connection. Google documentation also identifies the browser callback followed by a backend PKCE token exchange as the actual platform flow. This evidence increases confidence in A1 but does not establish that OpenRemote has passed real Gemini Connected Apps acceptance. The public staging connector and authenticated browser management remain blocked; no production deployment or production consent was attempted.
+
 ## Remaining gates
 
 Status: IMPLEMENTED / local review candidate. Not READY_FOR_PRODUCTION_REVIEW and not DEPLOYED. A real public HTTPS test instance with an independent issuer, MCP resource, database, user, device and Relay is required.
