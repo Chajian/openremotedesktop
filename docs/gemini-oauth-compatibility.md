@@ -35,6 +35,20 @@ A Cloudflare Quick Tunnel is unsuitable for the full MCP acceptance because its 
 
 Complete Gemini consent with explicit user action, then verify token exchange, initialize, tools/list, list_devices and get_device_status. Confirm the other platforms separately. Investigate the existing Agent test failures or explicitly assess and accept their risk before declaring full regression success.
 
+## Temporary staging lifecycle (required)
+
+The isolated public Gemini acceptance environment is disposable, not a second production service. A proposed dedicated hostname is subject to an authorized DNS availability check. Use only separately owned staging ingress, Server, database, Owner, OAuth clients, Agent and Relay; no production identity or data may be copied. Do not expose a host filesystem or reuse another service's tunnel credentials.
+
+Record the exact staging resource identifiers and ownership before creation, and prepare narrowly scoped teardown commands before opening the ingress. Set an explicit test deadline (maximum 24 hours per session); any extension requires an explicit operator decision. On successful acceptance, cancellation, failure or expiry:
+
+1. Preserve only sanitized validation evidence and reviewed source commits. Disconnect the test Connected App using the platform's own controls; never revoke an existing production grant.
+2. Disable the dedicated public route and stop the staging Agent, Relay, Server and tunnel. Delete only the DNS record, tunnel, route and scoped credentials created for this test.
+3. Remove the staging containers, volumes, SQLite database (including WAL/SHM), ephemeral tokens, test certificates/keys, private browser profiles, downloaded test dependencies, build context, temporary images and staging directories attributable to this task. Keep the development branch/worktree and shared base images/dependencies; do not run global Docker, Git or filesystem cleanup.
+4. Verify the staging hostname/route is gone at the DNS provider, ingress is inaccessible, and the recorded staging processes, containers, volumes, credentials and files no longer exist. DNS caches may require expiry before public NXDOMAIN is observable. Verify production health and existing device connections without restarting or modifying production.
+5. Record the cleanup result and any resource that could not be removed. The acceptance task is not closed while a temporary resource remains unaccounted for.
+
+Do not create an unattended persistent public instance if the operator cannot complete platform authorization or guarantee teardown. A staging PASS is separate from approval to release the production Server.
+
 ## Release and rollback preparation (not authorization)
 
 1. Verify the actual deployed image/commit, startup configuration, trusted public origins, reverse proxy/CSP headers and active Relay/operation inventory. Do not infer this from the Git baseline. Capture restorable image and configuration references, and back up the database according to the existing deployment runbook.
